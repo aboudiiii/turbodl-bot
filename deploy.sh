@@ -8,6 +8,9 @@
 #
 # Run as root/sudo inside the cloned repository:
 #   sudo ./deploy.sh
+#
+# One-line deployment (auto-writes .env, no editing needed):
+#   sudo ./deploy.sh --token "BOT_TOKEN" --admin-ids "ID1,ID2" --zain "07800000000"
 
 set -euo pipefail
 
@@ -16,6 +19,22 @@ SERVICE="turbodl"
 # Run the bot as the user who invoked sudo (or the current user).
 SERVICE_USER="${SUDO_USER:-$(id -un)}"
 BACKUP_TAG="turbodl-backup"
+
+# ---------------------------------------------------------------------------
+# CLI options (optional, for fully automated one-line deployment)
+# ---------------------------------------------------------------------------
+OPT_TOKEN=""
+OPT_ADMIN=""
+OPT_ZAIN=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --token)     OPT_TOKEN="${2:-}"   ; shift 2 ;;
+        --admin-ids) OPT_ADMIN="${2:-}"   ; shift 2 ;;
+        --zain)      OPT_ZAIN="${2:-}"    ; shift 2 ;;
+        -h|--help)   grep -E "^(#|$)" "$0" ; exit 0 ;;
+        *) echo "!! Unknown option: $1"; exit 1 ;;
+    esac
+done
 
 echo "==> TurboDL deploy started (dir: ${APP_DIR}, user: ${SERVICE_USER})"
 
@@ -70,6 +89,20 @@ echo "==> Creating virtualenv and installing requirements"
 echo "==> Preparing .env"
 if [ ! -f "${APP_DIR}/.env" ]; then
     cp "${APP_DIR}/.env.example" "${APP_DIR}/.env"
+fi
+
+# Write config values passed on the command line (one-line deployment mode).
+if [ -n "${OPT_TOKEN}" ]; then
+    sed -i "s|^BOT_TOKEN=.*|BOT_TOKEN=${OPT_TOKEN}|" "${APP_DIR}/.env"
+fi
+if [ -n "${OPT_ADMIN}" ]; then
+    sed -i "s|^ADMIN_IDS=.*|ADMIN_IDS=${OPT_ADMIN}|" "${APP_DIR}/.env"
+fi
+if [ -n "${OPT_ZAIN}" ]; then
+    sed -i "s|^ZAIN_CASH_NUMBER=.*|ZAIN_CASH_NUMBER=${OPT_ZAIN}|" "${APP_DIR}/.env"
+fi
+
+if [ ! -s "${APP_DIR}/.env" ]; then
     echo "!! IMPORTANT: edit ${APP_DIR}/.env  ->  BOT_TOKEN, ADMIN_IDS, ZAIN_CASH_NUMBER"
 fi
 chmod 600 "${APP_DIR}/.env"
@@ -138,5 +171,6 @@ echo " Manual    : ${APP_DIR}/backup.sh"
 echo "----------------------"
 echo " Next: edit ${APP_DIR}/.env first, then:"
 echo "   sudo systemctl restart ${SERVICE}"
+echo " (auto-configured .env? just restart is enough)"
 echo " Then open the bot in Telegram and send /start"
 echo "=============================================================="
