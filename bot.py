@@ -57,7 +57,10 @@ T = {
             "مرحباً بك في TurboDL 🚀\n\n"
             "البوت الأسرع لتحميل الفيديوهات، الصور، والصوتيات من"
             " (يوتيوب، تيك توك، إنستغرام، تويتر، وغيرها) بأعلى جودة وبدون إعلانات.\n\n"
-            "أرسل أي رابط لبدء التحميل فوراً! ⚡"
+            "أرسل أي رابط لبدء التحميل فوراً! ⚡\n\n"
+            "⚠️ تنبيه: البوت أداة مخصصة للاستخدام الشخصي والمباح فقط. "
+            "يُحظر استخدامه في تحميل أي محتوى يخالف الشريعة الإسلامية، "
+            "والمستخدم يتحمل المسؤولية الكاملة."
         ),
         "paid_limited": (
             "⚡ *العروض المتاحة:*\n"
@@ -268,7 +271,10 @@ T = {
             "👋 *Welcome to TurboDL!*\n\n"
             "⬇️ Send any video link and get the file here directly.\n"
             "Supports: YouTube, TikTok, Instagram, Twitter, Facebook and more.\n\n"
-            "Just send me any link to start 🚀"
+            "Just send me any link to start 🚀\n\n"
+            "⚠️ Disclaimer: This bot is intended for personal permissible use only. "
+            "It is prohibited to use it for downloading any content that violates Islamic "
+            "law, and the user bears full responsibility."
         ),
         "paid_limited": (
             "⚡ *Plans:*\n"
@@ -1872,6 +1878,23 @@ def _parse_ts(ts: str) -> Optional[float]:
 TRIM_RE = re.compile(r"^\s*(\d+(?::\d+)?):\d{2}\s*[-–—]\s*(\d+(?::\d+)?):\d{2}\s*$")
 
 
+ADULT_KEYWORDS = {
+    "ar": [
+        "xxx", "porn", "sex", "xnxx", "xvideos",
+    ],
+    "en": [
+        "sex", "porn", "xxx", "xnxx", "xvideos",
+    ],
+}
+
+
+def _is_adult_content(text: str, lang: str) -> bool:
+    """Check if text contains adult/NSFW keywords. Returns True if unsafe."""
+    keywords = ADULT_KEYWORDS.get(lang, ADULT_KEYWORDS["en"])
+    lowered = (text or "").lower()
+    return any(kw.lower() in lowered for kw in keywords)
+
+
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not user:
@@ -1893,6 +1916,14 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.effective_message.reply_text(tr(lang, "no_url"))
         return
     url = match.group(0)
+
+    # --- NSFW / Adult content filter ---
+    if _is_adult_content(url, lang):
+        await update.effective_message.reply_text(
+            "⛔ عفواً، لا يمكن تحميل هذا النوع من المحتوى."
+        )
+        return
+    # -------------------------------------
 
     was_stuck = _clear_stuck_active(context)
     if context.user_data.get("active_download"):
@@ -2079,6 +2110,18 @@ async def _process_link(
     title = (info.get("title") or "Video").strip()
     if len(title) > 60:
         title = title[:60] + "…"
+    # --- NSFW / Adult content filter (title check) ---
+    if _is_adult_content(title, lang):
+        try:
+            await status.edit_text(
+                "⛔ عفواً، لا يمكن تحميل هذا النوع من المحتوى."
+            )
+        except TelegramError:
+            await update.effective_message.reply_text(
+                "⛔ عفواً، لا يمكن تحميل هذا النوع من المحتوى."
+            )
+        return
+    # ------------------------------------------------
     site = info.get("extractor_key") or info.get("extractor") or ""
 
     try:
