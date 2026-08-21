@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
+import google.generativeai as genai
 
 from telegram import (
     InlineKeyboardButton,
@@ -3170,6 +3171,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 _back_keyboard(lang),
                 edit_message_id=query.message.message_id,
             )
+        elif target == "finish_pdf":
+            await finish_pdf_conversion(update, context)
         else:
             # fallback to main menu for unknown targets
             await _send_with_banner(
@@ -3589,6 +3592,25 @@ def main() -> None:
             handle_link,
         )
     )
+    # Student hub state handlers
+    app.add_handler(
+        MessageHandler(
+            filters.PHOTO & ~filters.COMMAND,
+            collect_pdf_images,
+        )
+    )
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            collect_summary_text,
+        )
+    )
+    app.add_handler(
+        MessageHandler(
+            filters.PHOTO & ~filters.COMMAND,
+            collect_ocr_text,
+        )
+    )
 
     async def cache_username(app_ref: Application) -> None:
         try:
@@ -3612,6 +3634,27 @@ def main() -> None:
     log.info("TurboDL started")
     _start_health_server()
     app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+# ============================================================
+# Student & AI Hub State Handlers
+# ============================================================
+
+async def collect_pdf_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Collect photos for Image-to-PDF conversion."""
+    ...
+
+async def collect_summary_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Collect text for AI summarization using Google Gemini."""
+    ...
+
+async def collect_ocr_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Extract text from photo using OCR."""
+    ...
+
+async def finish_pdf_conversion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Process the collected images into a PDF document."""
+    ...
 
 
 if __name__ == "__main__":
