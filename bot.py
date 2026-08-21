@@ -376,12 +376,36 @@ T = {
         "force_welcome": "✅ Thanks for joining! You can start downloading now.",
         "unlock_open": "Unlocked! Preparing...",
         "bonus_added": "🎁 {n} free downloads added to your account!",
-        "still_need": "❌ Subscription incomplete!\nRequired channels: {channels}",
+"still_need": "❌ Subscription incomplete!\nRequired channels: {channels}",
         "download_hub_title": "📥 Downloader Hub",
         "student_hub_title": "🎓 Student & AI Hub",
         "media_hub_title": "🛠️ Media Tools Hub",
         "games_hub_title": "🎮 Games & Loyalty",
         "profile_hub_title": "👤 User Profile",
+"profile_status": (
+            "👤 *Current Status*\n\n"
+            "📥 Free downloads used today: {daily_used}/3\n"
+            "📥 Remaining today: {daily_remaining}\n"
+            "🎁 Bonus balance (from referrals): {bonus} downloads\n"
+            "✅ Total downloads: {total_downloads}\n"
+            "🔗 Referral link: {referral_link}"
+        ),
+        "pdf_image_prompt": "📸 Send images now to convert to PDF",
+        "pdf2img_not_implemented": "⚠️ PDF to image conversion not currently supported",
+        "summarize_prompt": "📝 Send text now to summarize using AI",
+        "ocr_prompt": "🖼️ Send an image to extract text from it",
+        "pdf_image_prompt": "📸 أرسل الصور الآن لتحويلها إلى PDF",
+        "pdf2img_not_implemented": "⚠️ تحويل PDF إلى صورة غير مدعوم حالياً",
+        "summarize_prompt": "📝 أرسل النص الآن لملخصه بواسطة الذكاء الاصطناعي",
+        "ocr_prompt": "🖼️ أرسل صورة لاستخراج النص منها",
+        "profile_status": (
+            "👤 * الحالة الحالية*\n\n"
+            "📥 التحميلات المجانية المستخدمة اليوم: {daily_used}/3\n"
+            "📥 المتبقية اليوم: {daily_remaining}\n"
+            "🎁 رصيد الإضافات (من الإحالات): {bonus} تحميل\n"
+            "✅ التحميلات الإجمالية: {total_downloads}\n"
+            "🔗 رابط الإحالة: {referral_link}"
+        ),
         "locked_toast": "🔒 Join the required channels first!",
         "downloading": "⬇️ Downloading...",
         "uploading": "📤 Uploading to Telegram...",
@@ -3056,6 +3080,94 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 update.effective_chat.id,
                 tr(lang, "profile_hub_title"),
                 _profile_sub_keyboard(lang),
+                edit_message_id=query.message.message_id,
+            )
+        elif target == "profile:status":
+            # Show user profile stats
+            db_user = database.get_user(user.id)
+            lang = lang_of(db_user)
+            if db_user:
+                daily_used = db_user.get("daily_downloads", 0) or 0
+                daily_limit = config.FREE_DAILY_LIMIT
+                daily_remaining = daily_limit - daily_used
+                if db_user.get("is_premium"):
+                    daily_remaining = -1  # unlimited
+                bonus = db_user.get("bonus_quota", 0) or 0
+                total_downloads = db_user.get("total_downloads", 0) or 0
+                referral_link = f"https://t.me/{context.bot_data.get('bot_username', 'TurboDL_Iraq_bot')}?start=ref_{user.id}"
+                text = tr(
+                    lang,
+                    "profile_status",
+                    daily_used=daily_used,
+                    daily_remaining=daily_remaining if daily_remaining >= 0 else "غير محدود",
+                    bonus=bonus,
+                    total_downloads=total_downloads,
+                    referral_link=referral_link,
+                )
+                markup = _back_keyboard(lang)
+            else:
+                text = tr(lang, "no_user_data")
+                markup = _back_keyboard(lang)
+            await _send_with_banner(
+                context,
+                update.effective_chat.id,
+                text,
+                markup,
+                edit_message_id=query.message.message_id,
+            )
+        elif target == "profile:premium":
+            # Show premium upgrade options
+            text = tr(lang, "premium_upgrade_options")
+            markup = InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton("💎 اشتري بريميوم", callback_data="menu:subscribe")],
+                    [InlineKeyboardButton("⬅️ القائمةHauptmenu", callback_data="main:menu")],
+                ]
+            )
+            await _send_with_banner(
+                context,
+                update.effective_chat.id,
+                text,
+                markup,
+                edit_message_id=query.message.message_id,
+            )
+        elif target == "student:pdf":
+            # Image to PDF: mark state and ask user to send images
+            context.user_data["awaiting_pdf_images"] = True
+            await _send_with_banner(
+                context,
+                update.effective_chat.id,
+                tr(lang, "pdf_image_prompt"),
+                _back_keyboard(lang),
+                edit_message_id=query.message.message_id,
+            )
+        elif target == "student:pdf2img":
+            # PDF to Image: placeholder
+            await _send_with_banner(
+                context,
+                update.effective_chat.id,
+                tr(lang, "pdf2img_not_implemented"),
+                _back_keyboard(lang),
+                edit_message_id=query.message.message_id,
+            )
+        elif target == "student:summarize":
+            # Text Summarizer: mark state and ask user to send text
+            context.user_data["awaiting_summary_text"] = True
+            await _send_with_banner(
+                context,
+                update.effective_chat.id,
+                tr(lang, "summarize_prompt"),
+                _back_keyboard(lang),
+                edit_message_id=query.message.message_id,
+            )
+        elif target == "student:ocr":
+            # OCR: mark state and ask user to send image
+            context.user_data["awaiting_ocr_image"] = True
+            await _send_with_banner(
+                context,
+                update.effective_chat.id,
+                tr(lang, "ocr_prompt"),
+                _back_keyboard(lang),
                 edit_message_id=query.message.message_id,
             )
         else:
