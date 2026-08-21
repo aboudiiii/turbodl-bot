@@ -1,0 +1,32 @@
+name: Keep-alive
+
+# GitHub automatically disables all scheduled workflows in a repository
+# after 60 days without any commit activity. This workflow checks weekly
+# and, only when the last real commit is older than 50 days, records a
+# dummy commit to reset the timer - so the TurboDL Bot schedule (every 6 h)
+# never gets paused. Fully automatic; no manual intervention required.
+
+on:
+  schedule:
+    - cron: "0 3 * * 1" # Mondays 03:00 UTC - weekly health check
+  workflow_dispatch: # manual trigger for testing
+
+permissions:
+  contents: write # required to push the dummy commit
+
+concurrency:
+  group: keepalive
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Reset 60-day inactivity timer when needed
+        uses: gautamkrishnar/keepalive-workflow@v2
+        with:
+          time_elapsed: "50" # dummy-commit only if last commit > 50 days old
+          committer_username: "turbodl-keepalive"
+          committer_email: "41898282+github-actions[bot]@users.noreply.github.com"
