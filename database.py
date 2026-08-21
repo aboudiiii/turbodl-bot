@@ -150,8 +150,8 @@ def get_user(telegram_id: int) -> Optional[Dict[str, Any]]:
 
 
 def is_premium(telegram_id: int) -> bool:
-    # Bot owners/admins always have permanent premium access.
-    if telegram_id in config.ADMIN_IDS:
+    # Bot owner/admins always have permanent premium access.
+    if telegram_id == config.BOT_OWNER_ID or telegram_id in config.ADMIN_IDS:
         return True
     user = get_user(telegram_id)
     if not user or not user["is_premium"]:

