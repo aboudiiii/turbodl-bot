@@ -157,6 +157,11 @@ T = {
         "unlock_open": "تم فتح القفل! جارٍ التحضير...",
         "bonus_added": "🎁 تم إضافة {n} تحميلات مجانية لحسابك!",
         "still_need": "❌ لم تكمل الاشتراك بعد!\nالقنوات المطلوبة: {channels}",
+        "download_hub_title": "📥 قسم التحميل",
+        "student_hub_title": "🎓 قسم خدمات الطلاب",
+        "media_hub_title": "🛠️ قسم أدوات الميديا",
+        "games_hub_title": "🎮 قسم المسابقات والألعاب",
+        "profile_hub_title": "👤 قسم الحساب والاشتراك",
         "locked_toast": "🔒 يجب الاشتراك في القنوات المطلوبة أولاً!",
         "downloading": "⬇️ جاري التحميل...",
         "uploading": "📤 جاري الرفع إلى تيليجرام...",
@@ -372,6 +377,11 @@ T = {
         "unlock_open": "Unlocked! Preparing...",
         "bonus_added": "🎁 {n} free downloads added to your account!",
         "still_need": "❌ Subscription incomplete!\nRequired channels: {channels}",
+        "download_hub_title": "📥 Downloader Hub",
+        "student_hub_title": "🎓 Student & AI Hub",
+        "media_hub_title": "🛠️ Media Tools Hub",
+        "games_hub_title": "🎮 Games & Loyalty",
+        "profile_hub_title": "👤 User Profile",
         "locked_toast": "🔒 Join the required channels first!",
         "downloading": "⬇️ Downloading...",
         "uploading": "📤 Uploading to Telegram...",
@@ -685,6 +695,87 @@ def _back_keyboard(lang: str, job_id: Optional[str] = None) -> InlineKeyboardMar
     back_data = f"nav:{job_id}" if job_id else "nav:main"
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton(tr(lang, "back_btn"), callback_data=back_data)]]
+    )
+
+
+# ---------------------------------------------------------------------------
+# Category navigation keyboards
+# ---------------------------------------------------------------------------
+
+def _category_keyboard(lang: str) -> InlineKeyboardMarkup:
+    """Main category selection keyboard with all hubs."""
+    return InlineKeyboardMarkup(
+        [
+            [
+                [InlineKeyboardButton("📥 التحميل", callback_data="cat:download")],
+            [
+                InlineKeyboardButton("🎓 خدمات الطلاب", callback_data="cat:student"),
+                InlineKeyboardButton("🛠️ أدوات الميديا", callback_data="cat:media"),
+            ],
+            [
+                InlineKeyboardButton("🎮 الألعاب والنظام", callback_data="cat:games"),
+                InlineKeyboardButton("👤 الحساب", callback_data="cat:profile"),
+            ],
+        ]
+    )
+
+
+def _download_sub_keyboard(lang: str) -> InlineKeyboardMarkup:
+    """Sub-menu inside the Downloader Hub."""
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("⬇️ فيديو", callback_data="down:video")],
+            [InlineKeyboardButton("🎵 صوت", callback_data="down:audio")],
+            [InlineKeyboardButton("▶️ قوائم تشغيل", callback_data="down:playlist")],
+            [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="main:menu")],
+        ]
+    )
+
+
+def _student_sub_keyboard(lang: str) -> InlineKeyboardMarkup:
+    """Sub-menu inside the Student & AI Hub."""
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("📄 صورة إلى PDF", callback_data="student:pdf")],
+            [InlineKeyboardButton("📄 PDF إلى صورة", callback_data="student:pdf2img")],
+            [InlineKeyboardButton("📝 ملخص texto", callback_data="student:summarize")],
+            [InlineKeyboardButton("🖼️ استخراج نص من صورة", callback_data="student:ocr")],
+            [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="main:menu")],
+        ]
+    )
+
+
+def _media_sub_keyboard(lang: str) -> InlineKeyboardMarkup:
+    """Sub-menu inside the Media Tools Hub."""
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🎵 فيديو إلى MP3", callback_data="media:mp3")],
+            [InlineKeyboardButton("✂️ قص فيديو", callback_data="media:trim")],
+            [InlineKeyboardButton("📝 تحويل صوتي", callback_data="media:stt")],
+            [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="main:menu")],
+        ]
+    )
+
+
+def _games_sub_keyboard(lang: str) -> InlineKeyboardMarkup:
+    """Sub-menu inside the Games & Loyalty system."""
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("📝 اختبار يومي", callback_data="games:quiz")],
+            [InlineKeyboardButton("🎁 نظام الإحالة", callback_data="games:referral")],
+            [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="main:menu")],
+        ]
+    )
+
+
+def _profile_sub_keyboard(lang: str) -> InlineKeyboardMarkup:
+    """Sub-menu inside the User Profile."""
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("📊 الحالة الحالية", callback_data="profile:status")],
+            [InlineKeyboardButton("💎 الاشتراك بريميوم", callback_data="profile:premium")],
+            [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="main:menu")],
+        ]
     )
 
 
@@ -1179,7 +1270,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if db_user and db_user["language"] in ("ar", "en"):
         await _send_with_banner(
-            context, user.id, tr(lang, "start"), _menu_keyboard(lang)
+            context, user.id, tr(lang, "start"), _category_keyboard(lang)
         )
     else:
         kb = InlineKeyboardMarkup(
@@ -2892,6 +2983,33 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 reply_markup=_back_keyboard(lang),
                 disable_web_page_preview=True,
             )
+        elif action.startswith("cat:"):
+            cat = action.split(":", 1)[1]
+            if cat == "download":
+                await query.edit_message_text(
+                    tr(lang, "download_hub_title"),
+                    reply_markup=_download_sub_keyboard(lang),
+                )
+            elif cat == "student":
+                await query.edit_message_text(
+                    tr(lang, "student_hub_title"),
+                    reply_markup=_student_sub_keyboard(lang),
+                )
+            elif cat == "media":
+                await query.edit_message_text(
+                    tr(lang, "media_hub_title"),
+                    reply_markup=_media_sub_keyboard(lang),
+                )
+            elif cat == "games":
+                await query.edit_message_text(
+                    tr(lang, "games_hub_title"),
+                    reply_markup=_games_sub_keyboard(lang),
+                )
+            elif cat == "profile":
+                await query.edit_message_text(
+                    tr(lang, "profile_hub_title"),
+                    reply_markup=_profile_sub_keyboard(lang),
+                )
         return
 
     if query.data.startswith("nav:"):
