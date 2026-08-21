@@ -364,11 +364,13 @@ def download(
     progress_cb: ProgressCb,
     allow_hls: bool = False,
     trim: Optional[Tuple[float, float]] = None,
+    size_limit: Optional[int] = None,
 ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Downloads the media (optionally trimmed with ffmpeg).
 
+    ``size_limit`` overrides the plan's default cap in bytes (admin
+    /setlimit feature). Raises DownloadError when the file exceeds it.
     Returns (file_path, title, error_message).
-    Raises DownloadError if the file exceeds the user's size limit.
     """
     # Unique per job: millisecond timestamps collide under concurrency and one
     # job's cleanup would then delete another job's in-progress .part file.
@@ -465,7 +467,9 @@ def download(
             raise
 
     size = os.path.getsize(file_path)
-    limit = config.PREMIUM_MAX_FILE_SIZE if premium else config.FREE_MAX_FILE_SIZE
+    limit = size_limit or (
+        config.PREMIUM_MAX_FILE_SIZE if premium else config.FREE_MAX_FILE_SIZE
+    )
     if size > limit:
         _rmtree(job_dir)
         limit_mb = limit / 1024 / 1024

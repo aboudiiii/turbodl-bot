@@ -251,6 +251,7 @@ T = {
         "admin_usage": "الاستخدام: /approve <user_id>",
         "usage_setexpiry": "الاستخدام: /setexpiry <user_id> <days>",
         "not_admin": "⛔ هذا الأمر للمشرفين فقط.",
+        "banned": "⛔ تم حظرك من استخدام هذا البوت. تواصل مع المالك إذا كنت تعتقد أن هذا خطأ.",
         "not_allowed": "⛔ البوت حالياً في وضع الإطلاق الخاص. ما ملحوق إنك تستخدمه الآن.",
         "pay_preview": (
             "💳 *إيصال دفع جديد*\n\n"
@@ -455,6 +456,7 @@ T = {
         "admin_usage": "Usage: /approve <user_id>",
         "usage_setexpiry": "Usage: /setexpiry <user_id> <days>",
         "not_admin": "⛔ Admin command only.",
+        "banned": "⛔ You have been banned from using this bot. Contact the owner if you believe this is a mistake.",
         "not_allowed": "⛔ The bot is in private launch mode. You can't use it right now.",
         "pay_preview": (
             "💳 *New payment receipt*\n\n"
@@ -479,12 +481,15 @@ def lang_of(user: Optional[Dict[str, Any]]) -> str:
     return config.DEFAULT_LANGUAGE
 
 
-def is_admin(update: Update) -> bool:
-    return update.effective_user is not None and update.effective_user.id in config.ADMIN_IDS
-
-
 def is_owner(user_id: int) -> bool:
-    return user_id in config.ADMIN_IDS
+    """True for BOT_OWNER_ID or any ADMIN_IDS member."""
+    return (
+        user_id == config.BOT_OWNER_ID or user_id in config.ADMIN_IDS
+    ) if user_id else False
+
+
+def is_admin(update: Update) -> bool:
+    return update.effective_user is not None and is_owner(update.effective_user.id)
 
 
 def _upload_limit_for(user_id: int) -> int:
@@ -867,11 +872,18 @@ async def _send_force_prompt(
 
 
 async def _force_guard(update: Update, context: ContextTypes.DEFAULT_TYPE, lang: str) -> bool:
-    """Strict middleware: True only when the user may use the bot."""
+    """Strict middleware: True only when the user may use the bot.
+
+    Runs the ban check for every guarded handler, then force-sub.
+    Admins/owner bypass both.
+    """
+    user = update.effective_user
+    if user and not is_owner(user.id) and database.is_banned(user.id):
+        await update.effective_message.reply_text(tr(lang, "banned"))
+        return False
     if not config.FORCE_SUB_CHANNELS:
         return True
-    user = update.effective_user
-    if user and user.id in config.ADMIN_IDS:
+    if user and is_owner(user.id):
         return True
     missing = await _missing_channels(context, user.id)
     if not missing:
@@ -1567,6 +1579,281 @@ async def purge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Admin control panel & management commands (owner/admins only)
+# ---------------------------------------------------------------------------
+def _admin_stats_text() -> str:
+    started = database.stats_get("started_at")
+    uptime = _fmt_uptime(int(time.time()) - started) if started else "-"
+    return (
+        f"🛠 *لوحة تحكم الأدمن* — TurboDL\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👥 المستخدمون: `{database.user_count()}`\n"
+        f"⭐ بريميوم: `{database.premium_count()}`\n"
+        f"📥 إجمالي التحميلات: `{database.total_downloads()}` (اليوم: `{database.downloads_today()}`)\n"
+        f"⚡ قيد التنفيذ: `{download_queue.active_count}` | انتظار: `{download_queue.queued_count}`\n"
+        f"🗂 ملفات معالجة: `{database.stats_get('files_processed')}` ({_fmt_bytes(database.stats_get('bytes_processed'))})\n"
+        f"🎯 إصابات الكاش: `{database.stats_get('cache_hits')}`\n"
+        f"💰 إيراد اليوم: `{database.revenue_today():,}` د.ع\n"
+        f"🚫 المحظورون: `{len(database.banned_users())}`\n"
+        f"🕒 مدة التشغيل: {uptime}"
+    )
+
+
+def _admin_panel_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("📊 تحديث", callback_data="adm:refresh"),
+                InlineKeyboardButton("📜 السجلات", callback_data="adm:logs"),
+            ],
+            [
+                InlineKeyboardButton("🚫 المحظورون", callback_data="adm:banned"),
+                InlineKeyboardButton("📢 بث رسالة", callback_data="adm:broadcast"),
+            ],
+            [
+                InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="nav:main"),
+            ],
+        ]
+    )
+
+
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/admin - opens the admin control panel (owner/admins only)."""
+    if not is_admin(update):
+        await update.effective_message.reply_text(tr("ar", "not_admin"))
+        return
+    await _send_with_banner(
+        context,
+        update.effective_user.id,
+        _admin_stats_text(),
+        _admin_panel_keyboard(),
+    )
+
+
+async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles all adm:* panel buttons."""
+    query = update.callback_query
+    if not is_admin(update):
+        try:
+            await query.answer(tr("ar", "not_admin"), show_alert=True)
+        except TelegramError:
+            pass
+        return
+    action = query.data.split(":", 1)[1]
+
+    if action == "refresh":
+        try:
+            await query.answer()
+        except TelegramError:
+            pass
+        try:
+            await query.edit_message_caption(
+                caption=_admin_stats_text(),
+                parse_mode=constants.ParseMode.MARKDOWN,
+                reply_markup=_admin_panel_keyboard(),
+            )
+        except TelegramError:
+            pass
+        return
+
+    if action == "logs":
+        await query.answer()
+        path = _latest_log_file()
+        if not path:
+            await context.bot.send_message(
+                chat_id=update.effective_user.id,
+                text="📜 لا يوجد ملف سجل متاح (في الاستضافة السحابية تُطبع السجلات إلى console).",
+            )
+            return
+        with open(path, "rb") as fh:
+            await context.bot.send_document(
+                chat_id=update.effective_user.id,
+                document=fh,
+                filename=os.path.basename(path),
+                caption=f"📜 أحدث سجل تشغيل (`{os.path.basename(path)}`)",
+                parse_mode=constants.ParseMode.MARKDOWN,
+            )
+        return
+
+    if action == "banned":
+        ids = database.banned_users()
+        listing = "\n".join(f"• `{uid}`" for uid in ids[:30]) or "—"
+        await query.answer()
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text=(
+                f"🚫 المحظورون ({len(ids)}):\n{listing}\n\n"
+                f"لرفع الحظر: `/unban <user_id>`"
+            ),
+            parse_mode=constants.ParseMode.MARKDOWN,
+        )
+        return
+
+    if action == "broadcast":
+        await query.answer()
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text=(
+                "📢 لبث رسالة لجميع المستخدمين:\n"
+                "`/broadcast نص الرسالة`\n"
+                "أو ردّ على رسالة/مادة بـ `/broadcast` لإعادة إرسالها للجميع."
+            ),
+            parse_mode=constants.ParseMode.MARKDOWN,
+        )
+        return
+
+    try:
+        await query.answer()
+    except TelegramError:
+        pass
+
+
+def _latest_log_file() -> Optional[str]:
+    """Newest runtime log file, or None when nothing is on disk."""
+    candidates = [
+        os.path.join(config.BASE_DIR, "logs", "service_output.log"),
+        os.path.join(config.BASE_DIR, "logs", "turbodl.log"),
+        os.path.join(config.BASE_DIR, "bot.log"),
+        os.path.join(config.BASE_DIR, "bot_err.log"),
+    ]
+    existing = [p for p in candidates if os.path.isfile(p)]
+    if not existing:
+        return None
+    return max(existing, key=os.path.getmtime)
+
+
+def _parse_uid(args: List[str]) -> Optional[int]:
+    if not args or not args[0].lstrip("-").isdigit():
+        return None
+    return int(args[0])
+
+
+async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/ban <user_id> - blocks a user from using the bot."""
+    if not is_admin(update):
+        await update.effective_message.reply_text(tr("ar", "not_admin"))
+        return
+    uid = _parse_uid(context.args or [])
+    if uid is None:
+        await update.effective_message.reply_text(
+            "الاستخدام: `/ban <user_id>`", parse_mode=constants.ParseMode.MARKDOWN
+        )
+        return
+    if is_owner(uid):
+        await update.effective_message.reply_text("⛔ لا يمكن حظر مشرف/مالك.")
+        return
+    if not database.set_banned(uid, True):
+        await update.effective_message.reply_text(tr("ar", "user_not_found"))
+        return
+    await update.effective_message.reply_text(f"🚫 تم حظر المستخدم `{uid}`.", parse_mode=constants.ParseMode.MARKDOWN)
+    await _log_event(
+        context,
+        f"🚫 **حظر مستخدم**\n👤 المعرف: `{uid}`\n✍️ بواسطة: `{update.effective_user.id}`",
+    )
+
+
+async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/unban <user_id> - lifts a user's ban."""
+    if not is_admin(update):
+        await update.effective_message.reply_text(tr("ar", "not_admin"))
+        return
+    uid = _parse_uid(context.args or [])
+    if uid is None:
+        await update.effective_message.reply_text(
+            "الاستخدام: `/unban <user_id>`", parse_mode=constants.ParseMode.MARKDOWN
+        )
+        return
+    if not database.set_banned(uid, False):
+        await update.effective_message.reply_text(tr("ar", "user_not_found"))
+        return
+    await update.effective_message.reply_text(f"✅ تم رفع الحظر عن `{uid}`.", parse_mode=constants.ParseMode.MARKDOWN)
+    await _log_event(
+        context,
+        f"✅ **رفع حظر**\n👤 المعرف: `{uid}`\n✍️ بواسطة: `{update.effective_user.id}`",
+    )
+
+
+async def set_limit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/setlimit <user_id> <limit_in_mb|off> - per-user download size cap."""
+    if not is_admin(update):
+        await update.effective_message.reply_text(tr("ar", "not_admin"))
+        return
+    args = context.args or []
+    uid = _parse_uid(args)
+    if uid is None or len(args) < 2:
+        await update.effective_message.reply_text(
+            "الاستخدام: `/setlimit <user_id> <limit_in_mb>`\n"
+            "مثال: `/setlimit 123456789 2048`\n"
+            "لإزالة الحد المخصص: `/setlimit 123456789 off`",
+            parse_mode=constants.ParseMode.MARKDOWN,
+        )
+        return
+
+    raw = args[1].lower().strip()
+    if raw in ("off", "none", "clear", "0"):
+        if not database.set_size_limit(uid, None):
+            await update.effective_message.reply_text(tr("ar", "user_not_found"))
+            return
+        await update.effective_message.reply_text(
+            f"♻️ أُزيل الحد المخصص للمستخدم `{uid}` — عاد للخطة الافتراضية.",
+            parse_mode=constants.ParseMode.MARKDOWN,
+        )
+        return
+
+    if not raw.isdigit():
+        await update.effective_message.reply_text(
+            "❌ الحد يجب أن يكون رقماً بالميجابايت (أو `off`).",
+            parse_mode=constants.ParseMode.MARKDOWN,
+        )
+        return
+
+    mb = int(raw)
+    if mb < 1 or mb > 2048:
+        await update.effective_message.reply_text(
+            "❌ الحد يجب أن يكون بين 1 و 2048 ميجابايت."
+        )
+        return
+
+    if not database.set_size_limit(uid, mb):
+        # User never /started the bot - create the row, then apply.
+        database.add_user(uid, "-", "-")
+        database.set_size_limit(uid, mb)
+
+    label = _fmt_bytes(mb * 1024 * 1024)
+    await update.effective_message.reply_text(
+        f"✅ تم تعيين حد التحميل للمستخدم `{uid}` إلى *{label}*.",
+        parse_mode=constants.ParseMode.MARKDOWN,
+    )
+    await _log_event(
+        context,
+        f"⚙️ **تعديل حد تحميل**\n👤 المعرف: `{uid}`\n📏 الحد الجديد: {label}\n✍️ بواسطة: `{update.effective_user.id}`",
+    )
+
+
+async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/logs - sends the latest runtime log file into this chat."""
+    if not is_admin(update):
+        await update.effective_message.reply_text(tr("ar", "not_admin"))
+        return
+    path = _latest_log_file()
+    if not path:
+        await update.effective_message.reply_text(
+            "📜 لا يوجد ملف سجل متاح محلياً (في الاستضافة السحابية تُطبع السجلات إلى console)."
+        )
+        return
+    await update.effective_message.reply_document(
+        document=open(path, "rb"),
+        filename=os.path.basename(path),
+        caption=f"📜 أحدث سجل تشغيل (`{os.path.basename(path)}`)",
+        parse_mode=constants.ParseMode.MARKDOWN,
+    )
+    await _log_event(
+        context,
+        f"📜 **إرسال سجل**\n📄 الملف: `{os.path.basename(path)}`\n✍️ بواسطة: `{update.effective_user.id}`",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Downloads
 # ---------------------------------------------------------------------------
 def _parse_ts(ts: str) -> Optional[float]:
@@ -1716,7 +2003,12 @@ async def _process_link(
     if info.get("_type") in ("playlist", "multi_video"):
         info = (entries or [None])[0] or info
 
-    limit = config.PREMIUM_MAX_FILE_SIZE if premium else config.FREE_MAX_FILE_SIZE
+    override_mb = database.get_size_limit_mb(user.id)
+    limit = (
+        (override_mb * 1024 * 1024)
+        if override_mb
+        else (config.PREMIUM_MAX_FILE_SIZE if premium else config.FREE_MAX_FILE_SIZE)
+    )
     est = (
         info.get("filesize")
         or info.get("filesize_approx")
@@ -2269,6 +2561,11 @@ async def _run_format(
                 progress_cb,
                 allow_hls=premium,
                 trim=trim,
+                size_limit=(
+                    database.get_size_limit_mb(user.id) * 1024 * 1024
+                    if database.get_size_limit_mb(user.id)
+                    else None
+                ),
             )
         except downloader.DownloadCancelled:
             job["done"] = True
@@ -2490,11 +2787,19 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     db_user = database.get_user(user.id) if user else None
     lang = lang_of(db_user) if db_user else config.DEFAULT_LANGUAGE
 
+    # Banned users cannot press any button.
+    if user and not is_owner(user.id) and database.is_banned(user.id):
+        try:
+            await query.answer(tr(lang, "banned"), show_alert=True)
+        except TelegramError:
+            pass
+        return
+
     # Strict middleware: only the force-sub verify button works while locked.
     if (
         config.FORCE_SUB_CHANNELS
         and user
-        and user.id not in config.ADMIN_IDS
+        and not is_owner(user.id)
         and not query.data.startswith("force:")
     ):
         if await _missing_channels(context, user.id):
@@ -2935,6 +3240,12 @@ def main() -> None:
     app.add_handler(CommandHandler("revoke", revoke_user))
     app.add_handler(CommandHandler("setexpiry", set_expiry))
     app.add_handler(CommandHandler("purge", purge))
+    app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(CommandHandler("ban", ban_command))
+    app.add_handler(CommandHandler("unban", unban_command))
+    app.add_handler(CommandHandler("setlimit", set_limit_command))
+    app.add_handler(CommandHandler("logs", logs_command))
+    app.add_handler(CallbackQueryHandler(admin_callback, pattern=r"^adm:"))
     app.add_handler(
         CallbackQueryHandler(
             callback_handler, pattern=r"^(lang|menu|sub|pay|fmt|nav|tp|trim|pl|sch|force):"

@@ -47,7 +47,9 @@ def init_db() -> None:
                 joined_date      TEXT,
                 language         TEXT DEFAULT 'ar',
                 bonus_quota      INTEGER DEFAULT 0,
-                force_verified   INTEGER DEFAULT 0
+                force_verified   INTEGER DEFAULT 0,
+                banned           INTEGER DEFAULT 0,
+                size_limit_mb    INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS referrals (
@@ -113,6 +115,10 @@ def _migrate(conn) -> None:
         conn.execute("ALTER TABLE users ADD COLUMN bonus_quota INTEGER DEFAULT 0")
     if "force_verified" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN force_verified INTEGER DEFAULT 0")
+    if "banned" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0")
+    if "size_limit_mb" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN size_limit_mb INTEGER")
 
 
 def today() -> str:
@@ -370,6 +376,57 @@ def mark_force_verified(user_id: int) -> None:
             "UPDATE users SET force_verified = 1 WHERE telegram_id = ?",
             (user_id,),
         )
+
+
+# ---------------------------------------------------------------------------
+# Bans / per-user size limits (admin suite)
+# ---------------------------------------------------------------------------
+def set_banned(user_id: int, banned: bool) -> bool:
+    """Bans/unbans a user. Returns False when the user row doesn't exist."""
+    with _lock, _conn() as conn:
+        cur = conn.execute(
+            "UPDATE users SET banned = ? WHERE telegram_id = ?",
+            (1 if banned else 0, user_id),
+        )
+    return cur.rowcount > 0
+
+
+def is_banned(user_id: int) -> bool:
+    with _lock, _conn() as conn:
+        row = conn.execute(
+            "SELECT banned FROM users WHERE telegram_id = ?", (user_id,)
+        ).fetchone()
+    return bool(row and row[0])
+
+
+def banned_users() -> List[int]:
+    with _lock, _conn() as conn:
+        rows = conn.execute(
+            "SELECT telegram_id FROM users WHERE banned = 1 ORDER BY telegram_id"
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
+def set_size_limit(user_id: int, limit_mb: Optional[int]) -> bool:
+    """Sets a per-user download size cap in MB. None clears the override.
+
+    Returns False when the user row doesn't exist.
+    """
+    with _lock, _conn() as conn:
+        cur = conn.execute(
+            "UPDATE users SET size_limit_mb = ? WHERE telegram_id = ?",
+            (limit_mb, user_id),
+        )
+    return cur.rowcount > 0
+
+
+def get_size_limit_mb(user_id: int) -> Optional[int]:
+    """Per-user download cap override in MB, or None when not set."""
+    with _lock, _conn() as conn:
+        row = conn.execute(
+            "SELECT size_limit_mb FROM users WHERE telegram_id = ?", (user_id,)
+        ).fetchone()
+    return int(row[0]) if row and row[0] else None
 
 
 # ---------------------------------------------------------------------------
