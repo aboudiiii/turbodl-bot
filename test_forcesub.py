@@ -43,15 +43,15 @@ async def main() -> None:
         print("--- lock text ---")
         print(botmod._force_lock_text("ar", 1, 2))
 
-        # Live admin alert test
+        # Live log-channel alert test
         class FakeUser:
             id = config.ADMIN_ID
             username = "owner_test"
             full_name = "Owner Test"
-        await botmod._notify_admin(
+        await botmod._log_event(
             app, botmod._admin_new_user_text(FakeUser(), "اختبار النظام / system test")
         )
-        print("admin alert sent to", config.ADMIN_ID)
+        print("system alert sent to", config.LOG_CHANNEL_ID)
 
 
 asyncio.run(main())

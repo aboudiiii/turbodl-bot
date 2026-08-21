@@ -8,6 +8,7 @@ import tempfile
 import time
 import urllib.parse
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -18,12 +19,19 @@ from telegram import (
     Update,
     constants,
 )
-from telegram.error import TelegramError
+from telegram.error import (
+    BadRequest,
+    Forbidden,
+    NetworkError,
+    TelegramError,
+    TimedOut,
+)
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    ExtBot,
     MessageHandler,
     filters,
 )
@@ -892,20 +900,6 @@ def _admin_new_user_text(user, via: str) -> str:
     )
 
 
-async def _notify_admin(context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
-    """Sends a live alert to ADMIN_ID; never raises on failure."""
-    if not config.ADMIN_ID:
-        return
-    try:
-        await context.bot.send_message(
-            chat_id=config.ADMIN_ID,
-            text=text,
-            parse_mode=constants.ParseMode.MARKDOWN,
-        )
-    except TelegramError as exc:
-        log.warning("Admin notification to %s failed: %s", config.ADMIN_ID, exc)
-
-
 async def _log_event(context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
     """Sends a system-log entry to LOG_CHANNEL_ID; never raises on failure."""
     if not config.LOG_CHANNEL_ID:
@@ -918,6 +912,90 @@ async def _log_event(context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
         )
     except TelegramError as exc:
         log.warning("Log entry to %s failed: %s", config.LOG_CHANNEL_ID, exc)
+
+
+async def verify_log_channel(bot: ExtBot) -> bool:
+    """Probes LOG_CHANNEL_ID at startup.
+
+    Sends the 'Bot Online & Operational' banner. Returns True when the
+    channel accepted the message; on failure prints a clear warning to
+    stdout (via logging) instead of raising, so the bot keeps running.
+    """
+    if not config.LOG_CHANNEL_ID:
+        log.warning(
+            "LOG_CHANNEL_ID is not configured - system logs are disabled "
+            "(set ADMIN_ID or LOG_CHANNEL_ID to receive them)."
+        )
+        return False
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    text = (
+        "🟢 **Bot Online & Operational**\n"
+        f"🤖 التشغيل السليم مؤكد — البوت يعمل الآن\n"
+        f"🕒 {stamp}"
+    )
+    try:
+        await bot.send_message(
+            chat_id=config.LOG_CHANNEL_ID,
+            text=text,
+            parse_mode=constants.ParseMode.MARKDOWN,
+        )
+        return True
+    except Forbidden:
+        log.error(
+            "STARTUP CHECK FAILED: bot was blocked/kicked from log channel %s "
+            "(Forbidden). Re-add the bot as a member/admin. System logs are "
+            "disabled until fixed, but the bot keeps running.",
+            config.LOG_CHANNEL_ID,
+        )
+    except BadRequest as exc:
+        log.error(
+            "STARTUP CHECK FAILED: cannot post to LOG_CHANNEL_ID %s (%s). "
+            "Check the chat id - group/channel ids look like '-100xxxxxxxxxx'. "
+            "System logs are disabled until fixed, but the bot keeps running.",
+            config.LOG_CHANNEL_ID,
+            exc.message if hasattr(exc, "message") else exc,
+        )
+    except TelegramError as exc:
+        log.error(
+            "STARTUP CHECK FAILED: could not reach log channel %s (%s). "
+            "System logs are disabled until fixed, but the bot keeps running.",
+            config.LOG_CHANNEL_ID,
+            exc,
+        )
+    return False
+
+
+async def log_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global error handler: reports failures to stdout and the log channel.
+
+    Routine network hiccups are only logged to stdout; real errors also go
+    to LOG_CHANNEL_ID. Users never see these - their chats only ever get
+    the direct result of their own request.
+    """
+    err = context.error
+    if isinstance(err, (TimedOut, NetworkError)):
+        log.warning("Transient network error: %s", err)
+        return
+
+    log.error("Unhandled exception while processing an update:", exc_info=err)
+
+    where = "-"
+    user_id = "-"
+    if isinstance(update, Update):
+        where = (
+            update.callback_query.data
+            if update.callback_query
+            else (update.effective_message.text or "")[:80] if update.effective_message else "?"
+        )
+        if update.effective_user:
+            user_id = str(update.effective_user.id)
+
+    summary = (
+        f"🔴 {type(err).__name__}: {_md_escape(str(err)[:300])}\n"
+        f"👤 المستخدم: `{user_id}`\n"
+        f"📍 السياق: {_md_escape(where)}"
+    )
+    await _log_event(context, summary)
 
 
 async def _log_download(
@@ -956,7 +1034,7 @@ async def _process_referral(
     bonus = config.REFERRAL_BONUS_DOWNLOADS
     if database.add_referral(referrer, user.id, bonus):
         log.info("Referral recorded: %s -> %s", referrer, user.id)
-        await _notify_admin(
+        await _log_event(
             context,
             _admin_new_user_text(user, f"رابط دعوة بواسطة {referrer}"),
         )
@@ -1064,7 +1142,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if is_new_user:
         log.info("New user joined: %s (%s)", user.full_name, user.id)
-        await _notify_admin(
+        await _log_event(
             context, _admin_new_user_text(user, "انضمام جديد للبوت")
         )
 
@@ -1225,6 +1303,13 @@ async def receive_payment_photo(update: Update, context: ContextTypes.DEFAULT_TY
             )
         except TelegramError as exc:
             log.warning("Could not forward payment to admin %s: %s", admin_id, exc)
+
+    await _log_event(
+        context,
+        f"💳 **طلب اشتراك بريميوم**\n"
+        f"👤 المستخدم: {_md_escape(user.full_name or '')} (`{user.id}`)\n"
+        f"💰 المبلغ: {config.PREMIUM_PRICE_IQD} د.ع",
+    )
 
     await update.effective_message.reply_text(tr(lang, "payment_received"))
 
@@ -2570,7 +2655,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             database.mark_force_verified(user.id)
             database.grant_bonus_quota(user.id, config.FORCE_SUB_BONUS_CREDITS)
             log.info("Force-sub verified: %s (+%d credits)", user.id, config.FORCE_SUB_BONUS_CREDITS)
-            await _notify_admin(
+            await _log_event(
                 context, _admin_new_user_text(user, "اشتراك بالقناة")
             )
 
@@ -2842,8 +2927,11 @@ def main() -> None:
         except TelegramError:
             app_ref.bot_data["bot_username"] = ""
         await configure_start_screen(app_ref)
+        # Startup safety check: probe the log channel and announce uptime.
+        await verify_log_channel(app_ref.bot)
 
     app.post_init = cache_username
+    app.add_error_handler(log_error_handler)
 
     async def prune_cache(_ctx) -> None:
         database.cache_prune()

@@ -36,10 +36,14 @@ async def main() -> None:
         print("download log sent to", config.LOG_CHANNEL_ID)
 
         # 3. New-user alert to the channel (markdown underscore safety check)
-        await botmod._notify_admin(
+        await botmod._log_event(
             app, botmod._admin_new_user_text(FakeUser(), "انضمام جديد للبوت")
         )
-        print("join alert sent to", config.ADMIN_ID)
+        print("join alert sent to", config.LOG_CHANNEL_ID)
+
+        # 4. Startup verification: online banner + channel probe
+        ok = await botmod.verify_log_channel(app.bot)
+        print("startup log-channel check:", "OK" if ok else "FAILED (see warnings)")
 
 
 asyncio.run(main())
