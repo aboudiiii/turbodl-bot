@@ -1,6 +1,11 @@
 # Environment
 .env
 
+# Windows service helper + local Bot API server
+# (local-api/ contains per-token binlog folders - never commit)
+service/
+local-api/
+
 # Python
 __pycache__/
 *.py[cod]

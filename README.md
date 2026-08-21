@@ -96,6 +96,9 @@ sudo bash -c 'apt-get update -qq && apt-get install -y -qq git && rm -rf /home/u
 ```
 > استبدل: `YOUR_USERNAME` (اسمك في GitHub)، `YOUR_BOT_TOKEN` (من BotFather)،
 > `YOUR_TELEGRAM_ID`، `YOUR_ZAIN_NUMBER`.
+>
+> 💡 **لرفع حد 50MB وإرسال ملفات حتى 2GB**: أضف `--local-api-id "رقمك" --local-api-hash "هاشك"`
+> (من [my.telegram.org](https://my.telegram.org/api)) لتثبيت Local Bot API Server تلقائيًا.
 
 #### 4) الطريقة اليدوية (بدون سطر واحد)
 ```bash
@@ -212,6 +215,35 @@ journalctl -u turbodl -f
 
 Open the bot in Telegram, send `/start`, then any link. 🎉
 
+### 6. Enable 2 GB uploads (Local Bot API server) 🚀
+
+The standard Telegram Cloud API caps uploads at **50 MB**. To send files up to
+**2 GB**, run your own [Telegram Local Bot API server](https://core.telegram.org/bots/api#using-a-local-bot-api-server)
+on the same machine (the bot then talks to `127.0.0.1:8081` instead of
+`api.telegram.org`). You need your own `api_id` / `api_hash` from
+[my.telegram.org](https://my.telegram.org/api).
+
+`deploy.sh` can install and register it automatically — just add the two extra
+flags to the one-line command:
+
+```bash
+./deploy.sh --token "YOUR_BOT_TOKEN" --admin-ids "YOUR_TELEGRAM_ID" --zain "YOUR_ZAIN_NUMBER" \
+  --local-api-id "YOUR_API_ID" --local-api-hash "YOUR_API_HASH"
+```
+
+What it does:
+- Downloads the official `telegram-bot-api` server binary to `local-api/`
+  (x86_64: prebuilt; ARM Ampere: prints the official build instructions —
+  see <https://tdlib.github.io/telegram-bot-api/build.html> — and expects you to
+  place the binary there, then rerun `deploy.sh --local-api-id ...`)
+- Installs a `telegram-bot-api.service` systemd unit, running with `--local`
+  (this unlocks uploads up to 2000 MB and unlimited downloads)
+- Writes `TELEGRAM_LOCAL_API_URL=http://127.0.0.1:8081` and
+  `TELEGRAM_UPLOAD_LIMIT_MB=2048` into `.env`, then restarts the bot
+
+After a successful setup, both the **premium** plan and **admins**
+(`ADMIN_IDS`) can receive files up to 2 GB.
+
 ### Backups
 - Automatic: daily 03:00 → `turbodl-bot/backups/`
 - Manual: `sudo -u ubuntu ./backup.sh`
@@ -255,15 +287,20 @@ turbodl-bot/
 | `FREE_MAX_FILE_SIZE_MB` | `50` | Free file size cap (MB) |
 | `PREMIUM_MAX_FILE_SIZE_MB` | `2048` | Premium file size cap (MB) |
 | `TELEGRAM_UPLOAD_LIMIT_MB` | `50` | Upload limit (see note below) |
+| `ADMIN_MAX_FILE_SIZE_MB` | `2048` | Admins bypass the upload cap entirely, up to Telegram's full 2 GB bot limit |
 | `ARIA2_CONNECTIONS_PREMIUM` | `16` | Aria2 connections for premium |
 | `ARIA2_CONNECTIONS_FREE` | `4` | Aria2 connections for free |
+| `STUCK_DOWNLOAD_TIMEOUT` | `900` | Auto-clear a user's queue after Ns of no progress |
 | `CLEANUP_FILES` | `true` | Delete temp files after upload |
 
 > **Note on the upload limit:** the standard Telegram bot API caps file uploads
-> at **50 MB**. To let premium users actually receive files up to 2 GB, run the
+> at **50 MB**. To let users (premium and admins) actually receive files up to
+> 2 GB, run the
 > [Telegram Local Bot API server](https://core.telegram.org/bots/api#using-a-local-bot-api-server)
 > on the same machine, then set `TELEGRAM_UPLOAD_LIMIT_MB=2048`. Without it,
-> every file > 50 MB is rejected by Telegram regardless of the plan.
+> every file > 50 MB is rejected by Telegram regardless of the plan. Admins
+> (`ADMIN_IDS`) bypass the cap via `ADMIN_MAX_FILE_SIZE_MB` (default 2 GB) and
+> are not subject to any premium subscription check.
 
 ---
 

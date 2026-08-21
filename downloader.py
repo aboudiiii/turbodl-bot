@@ -1,12 +1,16 @@
+import asyncio
+import collections
 import logging
 import os
 import re
 import shutil
+import subprocess
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yt_dlp
 
@@ -28,6 +32,94 @@ class DownloadError(Exception):
 
 class DownloadCancelled(Exception):
     pass
+
+
+class QueueSlot:
+    """A granted place in the download queue; `await slot.release()` when done."""
+
+    __slots__ = ("_queue", "_released")
+
+    def __init__(self, queue: "DownloadQueue") -> None:
+        self._queue = queue
+        self._released = False
+
+    async def __aenter__(self) -> "QueueSlot":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.release()
+
+    async def release(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        async with self._queue._cond:
+            self._queue.active = max(0, self._queue.active - 1)
+            self._queue._cond.notify_all()
+
+
+class DownloadQueue:
+    """Global FIFO gate that caps how many downloads run at once.
+
+    `acquire()` returns a :class:`QueueSlot` once a spot is free. While
+    waiting, the optional ``on_position(pos)`` coroutine is called whenever
+    the caller's position in line changes (1 = next to start). Call
+    ``await slot.release()`` (or use ``async with``) when the work finished.
+    """
+
+    def __init__(self, max_active: int = 3) -> None:
+        self.max_active = max(1, int(max_active))
+        self.active = 0
+        self._waiters = collections.deque()
+        self._cond = asyncio.Condition()
+
+    @property
+    def active_count(self) -> int:
+        return self.active
+
+    @property
+    def queued_count(self) -> int:
+        return len(self._waiters)
+
+    async def acquire(
+        self, on_position: Optional[Callable[[int], Any]] = None
+    ) -> QueueSlot:
+        """Wait for a free slot, reporting queue position changes."""
+        waiter = object()
+        last_pos: Optional[int] = None
+        async with self._cond:
+            self._waiters.append(waiter)
+
+        async def _notify() -> None:
+            nonlocal last_pos
+            if not on_position:
+                return
+            async with self._cond:
+                if waiter not in self._waiters:
+                    return
+                pos = self._waiters.index(waiter) + 1
+            if pos != last_pos:
+                last_pos = pos
+                await on_position(pos)
+
+        try:
+            while True:
+                async with self._cond:
+                    if self._waiters[0] is waiter and self.active < self.max_active:
+                        self._waiters.popleft()
+                        self.active += 1
+                        return QueueSlot(self)
+                    await self._cond.wait()
+                await _notify()
+        except asyncio.CancelledError:
+            async with self._cond:
+                if waiter in self._waiters:
+                    self._waiters.remove(waiter)
+            raise
+
+
+# The single shared download gate, used across all chats.
+download_queue = DownloadQueue(max_active=config.MAX_ACTIVE_DOWNLOADS)
 
 
 @dataclass
@@ -54,14 +146,45 @@ def _sanitize_filename(name: str, max_len: int = config.MAX_FILENAME_LEN) -> str
     return name[:max_len] or "file"
 
 
-def get_info(url: str) -> Tuple[Optional[dict], Optional[str]]:
-    """Returns (info_dict, error_message)."""
-    opts = {
+def _common_opts() -> dict:
+    """Options shared by info/search/download passes so every platform
+    (YouTube, TikTok, Instagram, Facebook, Pinterest, SoundCloud, Twitter/X,
+    Threads, ...) uses the same resilient settings."""
+    return {
+        "socket_timeout": 30,
+        "retries": 3,
+        "fragment_retries": 5,
+        "extractor_retries": 3,
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    }
+
+
+def get_info(
+    url: str, noplaylist: bool = True, limit: Optional[int] = None
+) -> Tuple[Optional[dict], Optional[str]]:
+    """Returns (info_dict, error_message).
+
+    With ``noplaylist=False`` (and ``limit``) the raw result is returned,
+    including a possibly full ``entries`` list so playlists can be detected.
+    """
+    opts: dict = {
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
-        "noplaylist": True,
     }
+    opts.update(_common_opts())
+    if noplaylist:
+        opts["noplaylist"] = True
+    elif limit:
+        opts["playlist_items"] = f"1-{limit}"
+    else:
+        opts["noplaylist"] = False
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -73,11 +196,82 @@ def get_info(url: str) -> Tuple[Optional[dict], Optional[str]]:
 
     if not info:
         return None, "No info returned."
-    if info.get("_type") in ("playlist", "multi_video"):
+
+    if noplaylist and info.get("_type") in ("playlist", "multi_video"):
         info = (info.get("entries") or [None])[0]
         if not info:
             return None, "Could not read this link."
     return info, None
+
+
+def get_playlist(url: str, limit: int) -> Tuple[Optional[str], List[dict]]:
+    """Fetches a playlist's entries (capped to ``limit``).
+
+    Returns (playlist_title, entries). Entries are dicts with
+    ``index``, ``title`` and ``url`` (resolved for the next download step).
+    """
+    info, err = get_info(url, noplaylist=False, limit=limit)
+    if err or not info:
+        return None, []
+    if info.get("_type") not in ("playlist", "multi_video"):
+        return None, []
+    is_youtube = "youtube" in (info.get("extractor") or "")
+    entries: List[dict] = []
+    for i, e in enumerate((info.get("entries") or []), start=1):
+        if not e:
+            continue
+        item_url = (
+            e.get("webpage_url")
+            or e.get("original_url")
+            or e.get("url")
+        )
+        if not item_url:
+            continue
+        if is_youtube and not str(item_url).startswith("http"):
+            item_url = f"https://www.youtube.com/watch?v={item_url}"
+        entries.append(
+            {
+                "index": i,
+                "title": e.get("title") or f"Item {i}",
+                "url": item_url,
+            }
+        )
+    return info.get("title") or "Playlist", entries
+
+
+def search_youtube(query: str, limit: int = config.SEARCH_RESULTS) -> Tuple[List[dict], Optional[str]]:
+    """Searches YouTube, returning up to ``limit`` results."""
+    opts: dict = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "noplaylist": True,
+    }
+    opts.update(_common_opts())
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("search failed: %s", exc)
+        return [], str(exc).replace("ERROR: ", "")
+    entries = (info or {}).get("entries") or []
+    results: List[dict] = []
+    for e in entries:
+        if not e:
+            continue
+        results.append(
+            {
+                "title": e.get("title") or "Untitled",
+                "url": (
+                    e.get("webpage_url")
+                    or e.get("original_url")
+                    or e.get("url")
+                ),
+                "duration": e.get("duration"),
+                "uploader": e.get("uploader") or e.get("channel") or "",
+            }
+        )
+    return results, None
 
 
 def _base_opts(
@@ -108,10 +302,8 @@ def _base_opts(
         "postprocessor_hooks": [progress_hook],
         "merge_output_format": "mp4",
         "postprocessors": postprocessors,
-        "socket_timeout": 30,
-        "retries": 3,
-        "fragment_retries": 5,
     }
+    opts.update(_common_opts())
 
     if not allow_hls:
         opts["format_sort"] = ["res", "ext:mp4:m4a", "proto:https"]
@@ -134,13 +326,16 @@ def download(
     premium: bool,
     progress_cb: ProgressCb,
     allow_hls: bool = False,
+    trim: Optional[Tuple[float, float]] = None,
 ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    """Downloads the media.
+    """Downloads the media (optionally trimmed with ffmpeg).
 
     Returns (file_path, title, error_message).
     Raises DownloadError if the file exceeds the user's size limit.
     """
-    job_dir = Path(config.DOWNLOAD_DIR) / f"job_{int(time.time() * 1000)}"
+    # Unique per job: millisecond timestamps collide under concurrency and one
+    # job's cleanup would then delete another job's in-progress .part file.
+    job_dir = Path(config.DOWNLOAD_DIR) / f"job_{uuid.uuid4().hex[:12]}"
     job_dir.mkdir(parents=True, exist_ok=True)
     outdir = str(job_dir)
 
@@ -205,6 +400,14 @@ def download(
         return None, None, "Download finished but no output file was found."
 
     file_path = str(max(files, key=lambda p: p.stat().st_size))
+
+    if trim:
+        try:
+            file_path = _trim_file(file_path, trim[0], trim[1])
+        except DownloadError:
+            _rmtree(job_dir)
+            raise
+
     size = os.path.getsize(file_path)
     limit = config.PREMIUM_MAX_FILE_SIZE if premium else config.FREE_MAX_FILE_SIZE
     if size > limit:
@@ -229,6 +432,47 @@ def _progress_text(percent: float, speed: float, eta: int) -> str:
     if eta:
         line += f"  ⏱ {int(eta)}s"
     return line
+
+
+def _ffmpeg_time(seconds: float) -> str:
+    seconds = max(0.0, float(seconds))
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def _trim_file(path: str, start: float, end: float) -> str:
+    """Cuts a segment out of a downloaded file with ffmpeg (stream copy)."""
+    ffmpeg = config.FFMPEG_BIN
+    if not ffmpeg or not shutil.which(ffmpeg):
+        raise DownloadError("Trim requires ffmpeg to be installed on the server.")
+    duration = float(end) - float(start)
+    if duration <= 0:
+        raise DownloadError("Invalid trim range.")
+    out = os.path.join(os.path.dirname(path), "trimmed_" + os.path.basename(path))
+    cmd = [
+        ffmpeg, "-y",
+        "-ss", _ffmpeg_time(start),
+        "-i", path,
+        "-t", _ffmpeg_time(duration),
+        "-c", "copy",
+        out,
+    ]
+    subprocess.run(cmd, capture_output=True, text=True)
+    if not os.path.exists(out) or os.path.getsize(out) <= 0:
+        # Fall back to a re-encode (some containers don't support stream copy).
+        cmd2 = [
+            ffmpeg, "-y",
+            "-ss", _ffmpeg_time(start),
+            "-i", path,
+            "-t", _ffmpeg_time(duration),
+            out,
+        ]
+        subprocess.run(cmd2, capture_output=True, text=True)
+    if not os.path.exists(out) or os.path.getsize(out) <= 0:
+        raise DownloadError("Could not trim the file.")
+    return out
 
 
 def _rmtree(path: Path) -> None:

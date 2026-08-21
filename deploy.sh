@@ -11,6 +11,10 @@
 #
 # One-line deployment (auto-writes .env, no editing needed):
 #   sudo ./deploy.sh --token "BOT_TOKEN" --admin-ids "ID1,ID2" --zain "07800000000"
+#
+# Optional: install + run a Telegram Local Bot API server (2 GB uploads):
+#   sudo ./deploy.sh --token "..." --admin-ids "..." --zain "..." \
+#       --local-api-id "YOUR_API_ID" --local-api-hash "YOUR_API_HASH"
 
 set -euo pipefail
 
@@ -26,11 +30,15 @@ BACKUP_TAG="turbodl-backup"
 OPT_TOKEN=""
 OPT_ADMIN=""
 OPT_ZAIN=""
+OPT_API_ID=""
+OPT_API_HASH=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --token)     OPT_TOKEN="${2:-}"   ; shift 2 ;;
-        --admin-ids) OPT_ADMIN="${2:-}"   ; shift 2 ;;
-        --zain)      OPT_ZAIN="${2:-}"    ; shift 2 ;;
+        --token)         OPT_TOKEN="${2:-}"   ; shift 2 ;;
+        --admin-ids)     OPT_ADMIN="${2:-}"   ; shift 2 ;;
+        --zain)          OPT_ZAIN="${2:-}"    ; shift 2 ;;
+        --local-api-id)  OPT_API_ID="${2:-}"  ; shift 2 ;;
+        --local-api-hash) OPT_API_HASH="${2:-}" ; shift 2 ;;
         -h|--help)   grep -E "^(#|$)" "$0" ; exit 0 ;;
         *) echo "!! Unknown option: $1"; exit 1 ;;
     esac
@@ -144,6 +152,78 @@ systemctl enable --now "${SERVICE}"
 systemctl restart "${SERVICE}"
 
 # ---------------------------------------------------------------------------
+# 5b. Optional: Telegram Local Bot API server (uploads up to 2 GB)
+#
+# Enabled when BOTH --local-api-id and --local-api-hash are passed (values come
+# from https://my.telegram.org/api). Installs the telegram-bot-api server in
+# local mode on 127.0.0.1:8081 as a systemd unit, then points the bot at it.
+# ---------------------------------------------------------------------------
+if [ -n "${OPT_API_ID}" ] && [ -n "${OPT_API_HASH}" ]; then
+    echo "==> Installing Local Bot API server (2 GB uploads)"
+    LOCAL_API_DIR="${APP_DIR}/local-api"
+    LOCAL_API_BIN="${LOCAL_API_DIR}/telegram-bot-api"
+    mkdir -p "${LOCAL_API_DIR}"
+
+    if [ ! -x "${LOCAL_API_BIN}" ]; then
+        DOWNLOAD_URL="https://github.com/jakbin/telegram-bot-api-binary/releases/latest/download/telegram-bot-api"
+        echo "   Downloading telegram-bot-api binary..."
+        if curl -fSL --retry 3 -o "${LOCAL_API_BIN}" "${DOWNLOAD_URL}"; then
+            chmod +x "${LOCAL_API_BIN}"
+        else
+            rm -f "${LOCAL_API_BIN}"
+            echo "!! Could not download a prebuilt binary."
+            echo "!! Build the official server at https://tdlib.github.io/telegram-bot-api/build.html"
+            echo "   (choose your OS; on ARM Ampere select 'Other'/arm64), then place the"
+            echo "   'telegram-bot-api' binary at: ${LOCAL_API_BIN}"
+            echo "   and rerun: sudo ./deploy.sh --local-api-id ... --local-api-hash ..."
+        fi
+    fi
+
+    if [ -x "${LOCAL_API_BIN}" ]; then
+        cat > "/etc/systemd/system/telegram-bot-api.service" <<EOF
+[Unit]
+Description=Telegram Bot API local server (2 GB uploads)
+After=network.target network-online.target
+
+[Service]
+Type=simple
+User=${SERVICE_USER}
+WorkingDirectory=${LOCAL_API_DIR}
+ExecStart=${LOCAL_API_BIN} --api-id=${OPT_API_ID} --api-hash=${OPT_API_HASH} --local --http-port=8081 --dir=${LOCAL_API_DIR}/data --temp-dir=${LOCAL_API_DIR}/tmp
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+StandardOutput=append:${APP_DIR}/logs/telegram-bot-api.log
+StandardError=append:${APP_DIR}/logs/telegram-bot-api.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        mkdir -p "${LOCAL_API_DIR}/data" "${LOCAL_API_DIR}/tmp"
+        chmod 700 "${LOCAL_API_DIR}/data" "${LOCAL_API_DIR}/tmp"
+        systemctl daemon-reload
+        systemctl enable --now telegram-bot-api
+        systemctl restart telegram-bot-api
+
+        # Point the bot at the local server and lift the 50 MB cap.
+        if grep -q "^TELEGRAM_LOCAL_API_URL=" "${APP_DIR}/.env"; then
+            sed -i "s|^TELEGRAM_LOCAL_API_URL=.*|TELEGRAM_LOCAL_API_URL=http://127.0.0.1:8081|" "${APP_DIR}/.env"
+        else
+            echo "TELEGRAM_LOCAL_API_URL=http://127.0.0.1:8081" >> "${APP_DIR}/.env"
+        fi
+        if grep -q "^TELEGRAM_UPLOAD_LIMIT_MB=" "${APP_DIR}/.env"; then
+            sed -i "s|^TELEGRAM_UPLOAD_LIMIT_MB=.*|TELEGRAM_UPLOAD_LIMIT_MB=2048|" "${APP_DIR}/.env"
+        else
+            echo "TELEGRAM_UPLOAD_LIMIT_MB=2048" >> "${APP_DIR}/.env"
+        fi
+        systemctl restart "${SERVICE}"
+        echo "   Local Bot API server installed on 127.0.0.1:8081 (systemd: telegram-bot-api)"
+    else
+        echo "!! Local Bot API server NOT installed. The bot keeps 50 MB Cloud API limit for now."
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # 6. Daily database backup (03:00 UTC)
 # ---------------------------------------------------------------------------
 echo "==> Scheduling daily database backup (backup.sh via cron)"
@@ -168,6 +248,13 @@ echo " Restart   : sudo systemctl restart ${SERVICE}"
 echo " Stop      : sudo systemctl stop ${SERVICE}"
 echo " Backup    : ${APP_DIR}/backups  (daily at 03:00 UTC)"
 echo " Manual    : ${APP_DIR}/backup.sh"
+if [ -n "${OPT_API_ID}" ] && [ -n "${OPT_API_HASH}" ]; then
+    if systemctl is-active --quiet telegram-bot-api; then
+        echo " Local API : ACTIVE on 127.0.0.1:8081 (2 GB uploads OK)"
+    else
+        echo " Local API : requested but not running — see logs/telegram-bot-api.log"
+    fi
+fi
 echo "----------------------"
 echo " Next: edit ${APP_DIR}/.env first, then:"
 echo "   sudo systemctl restart ${SERVICE}"
