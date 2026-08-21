@@ -1683,13 +1683,28 @@ async def _process_link(
     else:
         info, err = await asyncio.to_thread(downloader.get_info, url)
     if err or not info:
-        try:
-            await status.edit_text(
-                tr(lang, "unsupported"), parse_mode=constants.ParseMode.MARKDOWN
-            )
-        except TelegramError:
-            pass
-        return
+        if downloader.is_instagram(url):
+            # Instagram extraction often fails on anonymous rate limits even
+            # when the media itself is downloadable. Skip the menu and go
+            # straight to download - downloader.download() has a dedicated
+            # gallery-dl fallback for exactly this case.
+            log.info("Instagram get_info failed (%s); trying direct download", err)
+            info = {
+                "id": "ig",
+                "title": "Instagram",
+                "_type": "regular",
+                "extractor": "instagram",
+                "formats": [],
+                "webpage_url": url,
+            }
+        else:
+            try:
+                await status.edit_text(
+                    tr(lang, "unsupported"), parse_mode=constants.ParseMode.MARKDOWN
+                )
+            except TelegramError:
+                pass
+            return
 
     # ---- Playlist? ----
     entries = None
@@ -2265,6 +2280,14 @@ async def _run_format(
             return
         except DownloadError as exc:
             job["done"] = True
+            if downloader.is_instagram(url):
+                await _log_event(
+                    context,
+                    f"❌ **فشل تحميل انستغرام**\n"
+                    f"🔗 الرابط: `{url}`\n"
+                    f"👤 المستخدم: `{user.id}`\n"
+                    f"⚠️ السبب: {_md_escape(str(exc)[:200])}",
+                )
             try:
                 await status.edit_text(tr(lang, "download_error", error=str(exc)))
             except TelegramError:
@@ -2274,6 +2297,14 @@ async def _run_format(
 
         if err or not path:
             job["done"] = True
+            if downloader.is_instagram(url):
+                await _log_event(
+                    context,
+                    f"❌ **فشل تحميل انستغرام**\n"
+                    f"🔗 الرابط: `{url}`\n"
+                    f"👤 المستخدم: `{user.id}`\n"
+                    f"⚠️ السبب: {_md_escape((err or 'Unknown error')[:200])}",
+                )
             try:
                 await status.edit_text(
                     tr(lang, "download_error", error=err or "Unknown error"),

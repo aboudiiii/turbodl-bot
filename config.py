@@ -115,6 +115,11 @@ SEARCH_RESULTS = _env_int("SEARCH_RESULTS", 5)
 # ffmpeg binary used for the trim/cut feature. Empty value disables trimming.
 FFMPEG_BIN = _env("FFMPEG_BIN", "ffmpeg")
 
+# Netscape-format cookies file handed to yt-dlp (fixes Instagram login walls,
+# "empty media response" and anonymous rate limits). Path is relative to this
+# file when not absolute. Missing file = cookies disabled.
+YTDLP_COOKIES_FILE = _env("YTDLP_COOKIES_FILE", "cookies.txt")
+
 # ---------------------------------------------------------------------------
 # Welcome banner (optional)
 # ---------------------------------------------------------------------------

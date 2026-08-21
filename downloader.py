@@ -5,8 +5,10 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
+import urllib.parse
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +26,35 @@ UNSUPPORTED_HINT = "https://t.me/TurboDL_bot"
 
 # A single URL per message is expected. Extracts the first http(s) link.
 URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+
+# Error fragments that mean an Instagram extraction hit auth/rate limits and
+# may still succeed via the gallery-dl fallback (or with cookies).
+_INSTAGRAM_RETRY_HINTS = (
+    "empty media response",
+    "login required",
+    "rate-limit",
+    "rate limit",
+    "429",
+    "not available",
+    "private",
+    "restricted",
+    "unauthorized",
+)
+
+
+def is_instagram(url: str) -> bool:
+    """True when the link points at Instagram."""
+    host = urllib.parse.urlparse(url or "").netloc.lower()
+    return "instagram.com" in host or "instagr.am" in host
+
+
+def _cookies_file() -> Optional[str]:
+    """Absolute path to the yt-dlp cookies file when it exists, else None."""
+    raw = (config.YTDLP_COOKIES_FILE or "").strip()
+    if not raw:
+        return None
+    path = raw if os.path.isabs(raw) else os.path.join(config.BASE_DIR, raw)
+    return path if os.path.isfile(path) else None
 
 
 class DownloadError(Exception):
@@ -150,7 +181,7 @@ def _common_opts() -> dict:
     """Options shared by info/search/download passes so every platform
     (YouTube, TikTok, Instagram, Facebook, Pinterest, SoundCloud, Twitter/X,
     Threads, ...) uses the same resilient settings."""
-    return {
+    opts: dict = {
         "socket_timeout": 30,
         "retries": 3,
         "fragment_retries": 5,
@@ -163,6 +194,12 @@ def _common_opts() -> dict:
             "Accept-Language": "en-US,en;q=0.9",
         },
     }
+    # Netscape cookies.txt (exported from a logged-in browser session) lifts
+    # Instagram's anonymous rate limits and fixes "empty media response".
+    cookies = _cookies_file()
+    if cookies:
+        opts["cookiefile"] = cookies
+    return opts
 
 
 def get_info(
@@ -368,11 +405,12 @@ def download(
         allow_hls,
     )
 
+    err_msg: Optional[str] = None
+    info: Optional[dict] = None
     with yt_dlp.YoutubeDL(opts) as ydl:
         try:
             info = ydl.extract_info(url, download=True)
         except yt_dlp.utils.DownloadError as exc:
-            _rmtree(job_dir)
             msg = str(exc).replace("ERROR: ", "")
             if "aria2" in msg.lower() or "does not support" in msg.lower():
                 opts.pop("external_downloader", None)
@@ -381,18 +419,36 @@ def download(
                     with yt_dlp.YoutubeDL(opts) as ydl2:
                         info = ydl2.extract_info(url, download=True)
                 except yt_dlp.utils.DownloadError as exc2:
-                    _rmtree(job_dir)
-                    return None, None, str(exc2).replace("ERROR: ", "")
+                    err_msg = str(exc2).replace("ERROR: ", "")
+                except Exception as exc2:  # noqa: BLE001
+                    if isinstance(exc2, DownloadCancelled):
+                        _rmtree(job_dir)
+                        raise
+                    err_msg = str(exc2)
             else:
-                _rmtree(job_dir)
-                return None, None, msg
+                err_msg = msg
         except Exception as exc:  # noqa: BLE001
             if isinstance(exc, DownloadCancelled):
                 _rmtree(job_dir)
                 raise
             log.exception("download failed")
-            _rmtree(job_dir)
-            return None, None, str(exc)
+            err_msg = str(exc)
+
+    # Instagram failover: yt-dlp often hits login walls / anonymous
+    # rate limits ("empty media response"). gallery-dl uses a separate
+    # extraction pipeline that frequently still works.
+    if info is None and err_msg and is_instagram(url):
+        progress_cb(10.0, "🔁 Trying alternative extractor...")
+        fb_path, fb_title, fb_err = _gallery_dl_fallback(url, job_dir)
+        if fb_path:
+            log.info("Instagram fallback succeeded for %s", url)
+            info = {"title": fb_title, "_type": "regular"}
+        elif fb_err:
+            err_msg = fb_err
+
+    if info is None:
+        _rmtree(job_dir)
+        return None, None, err_msg or "Download failed."
 
     files = [p for p in job_dir.iterdir() if p.is_file() and not p.name.endswith(".part")]
     if not files:
@@ -420,6 +476,66 @@ def download(
 
     title = (info or {}).get("title") or Path(file_path).stem
     return file_path, title, None
+
+
+def _gallery_dl_fallback(
+    url: str, job_dir: Path
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Secondary Instagram extraction via gallery-dl.
+
+    Returns (file_path, title, error_message). Files are placed directly in
+    job_dir so the caller's generic file-discovery picks them up.
+    """
+    exe = shutil.which("gallery-dl")
+    if exe:
+        cmd: List[str] = [exe]
+    else:
+        cmd = [sys.executable, "-m", "gallery_dl"]
+    cmd += ["-D", str(job_dir), "--no-colors", "--no-part", url]
+    cookies = _cookies_file()
+    if cookies:
+        cmd += ["--cookies", cookies]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    except subprocess.TimeoutExpired:
+        return None, None, "Instagram fallback timed out."
+    except FileNotFoundError:
+        log.warning("gallery-dl is not installed; Instagram fallback unavailable.")
+        return None, None, None  # silent: primary error stands
+
+    files = [
+        p for p in job_dir.iterdir()
+        if p.is_file() and not p.name.endswith(".part") and p.stat().st_size > 0
+    ] if job_dir.is_dir() else []
+    if proc.returncode != 0 or not files:
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        detail = tail[-1] if tail else f"exit code {proc.returncode}"
+        log.warning("gallery-dl failed for %s: %s", url, detail)
+        return None, None, f"Instagram fallback failed: {detail}"
+
+    file_path = str(max(files, key=lambda p: p.stat().st_size))
+    title = _instagram_title_from_url(url) or Path(file_path).stem
+    return file_path, title, None
+
+
+def _instagram_title_from_url(url: str) -> Optional[str]:
+    """Best-effort title from an Instagram URL shortcode."""
+    try:
+        parts = [p for p in urllib.parse.urlparse(url).path.split("/") if p]
+        for label in ("p", "reel", "reels", "tv"):
+            if label in parts:
+                idx = parts.index(label)
+                if idx + 1 < len(parts):
+                    return f"Instagram_{parts[idx + 1]}"
+        return parts[-1] if parts else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _progress_text(percent: float, speed: float, eta: int) -> str:
