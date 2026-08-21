@@ -1141,6 +1141,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lang = lang_of(db_user)
 
     if is_new_user:
+        # INVARIANT: the "مستخدم جديد!" alert goes ONLY to LOG_CHANNEL_ID
+        # (_log_event). Never send it to the user's private chat or to
+        # ADMIN_ID - the user must only receive the welcome banner + menu.
         log.info("New user joined: %s (%s)", user.full_name, user.id)
         await _log_event(
             context, _admin_new_user_text(user, "انضمام جديد للبوت")
