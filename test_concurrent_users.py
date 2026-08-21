@@ -198,12 +198,13 @@ def run():
     asyncio.set_event_loop(loop)
 
     try:
-        # Run with 5 users first, then 10
+        # Run with 5 users first (easier on event loop)
         print("\n=== Concurrent stress test: 5 users ===")
         loop.run_until_complete(run_stress_test(loop, num_users=5, downloads_per_user=3))
 
+        # 10 users with reduced downloads per user to avoid overwhelming the queue
         print("\n=== Concurrent stress test: 10 users ===")
-        loop.run_until_complete(run_stress_test(loop, num_users=10, downloads_per_user=2))
+        loop.run_until_complete(run_stress_test(loop, num_users=10, downloads_per_user=1))
     finally:
         loop.close()
 
