@@ -1,0 +1,45 @@
+name: TurboDL Bot
+
+# Runs the Telegram bot continuously on GitHub's free runners.
+# GitHub hard-caps any single job at 6 hours, so a cron re-launches the bot
+# every 6 hours; concurrency cancellation ensures only ONE instance ever
+# polls Telegram (two would trigger 409 Conflict errors).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # manual start from the Actions tab
+  schedule:
+    - cron: "0 */6 * * *" # every 6 hours (UTC)
+
+concurrency:
+  group: turbodl-bot
+  cancel-in-progress: true
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350 # just under GitHub's 6 h (360 min) job ceiling
+    env:
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      ADMIN_ID: ${{ secrets.ADMIN_ID }}
+      LOG_CHANNEL_ID: ${{ secrets.LOG_CHANNEL_ID }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install dependencies
+        run: pip install --no-cache-dir -r requirements.txt
+
+      - name: Run bot
+        run: python bot.py
