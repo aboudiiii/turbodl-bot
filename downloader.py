@@ -447,6 +447,9 @@ def download(
             info = {"title": fb_title, "_type": "regular"}
         elif fb_err:
             err_msg = fb_err
+            # User-friendly Instagram rate limit message
+            if "429" in (err_msg or "").lower() or "rate limit" in (err_msg or "").lower():
+                err_msg = "⚠️ المحتوى غير متاح حالياً من إنستغرام debido a limitaciones temporales, por favor inténtalo de nuevo"
 
     if info is None:
         _rmtree(job_dir)

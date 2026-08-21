@@ -746,7 +746,7 @@ def _download_sub_keyboard(lang: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton("⬇️ فيديو", callback_data="down:video")],
             [InlineKeyboardButton("🎵 صوت", callback_data="down:audio")],
             [InlineKeyboardButton("▶️ قوائم تشغيل", callback_data="down:playlist")],
-            [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="main:menu")],
+            [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="nav:main")],
         ]
     )
 
@@ -759,7 +759,7 @@ def _student_sub_keyboard(lang: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton("📄 PDF إلى صورة", callback_data="student:pdf2img")],
             [InlineKeyboardButton("📝 ملخص texto", callback_data="student:summarize")],
             [InlineKeyboardButton("🖼️ استخراج نص من صورة", callback_data="student:ocr")],
-            [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="main:menu")],
+            [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="nav:main")],
         ]
     )
 
@@ -771,7 +771,7 @@ def _media_sub_keyboard(lang: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton("🎵 فيديو إلى MP3", callback_data="media:mp3")],
             [InlineKeyboardButton("✂️ قص فيديو", callback_data="media:trim")],
             [InlineKeyboardButton("📝 تحويل صوتي", callback_data="media:stt")],
-            [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="main:menu")],
+            [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="nav:main")],
         ]
     )
 
@@ -782,7 +782,7 @@ def _games_sub_keyboard(lang: str) -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("📝 اختبار يومي", callback_data="games:quiz")],
             [InlineKeyboardButton("🎁 نظام الإحالة", callback_data="games:referral")],
-            [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="main:menu")],
+            [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="nav:main")],
         ]
     )
 
@@ -793,7 +793,7 @@ def _profile_sub_keyboard(lang: str) -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("📊 الحالة الحالية", callback_data="profile:status")],
             [InlineKeyboardButton("💎 الاشتراك بريميوم", callback_data="profile:premium")],
-            [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="main:menu")],
+            [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="nav:main")],
         ]
     )
 
