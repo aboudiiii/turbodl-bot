@@ -706,16 +706,11 @@ def _category_keyboard(lang: str) -> InlineKeyboardMarkup:
     """Main category selection keyboard with all hubs."""
     return InlineKeyboardMarkup(
         [
-            [
-                [InlineKeyboardButton("📥 التحميل", callback_data="cat:download")],
-            [
-                InlineKeyboardButton("🎓 خدمات الطلاب", callback_data="cat:student"),
-                InlineKeyboardButton("🛠️ أدوات الميديا", callback_data="cat:media"),
-            ],
-            [
-                InlineKeyboardButton("🎮 الألعاب والنظام", callback_data="cat:games"),
-                InlineKeyboardButton("👤 الحساب", callback_data="cat:profile"),
-            ],
+            [InlineKeyboardButton("📥 التحميل", callback_data="cat:download")],
+            [InlineKeyboardButton("🎓 خدمات الطلاب", callback_data="cat:student"),
+             InlineKeyboardButton("🛠️ أدوات الميديا", callback_data="cat:media")],
+            [InlineKeyboardButton("🎮 الألعاب والنظام", callback_data="cat:games"),
+             InlineKeyboardButton("👤 الحساب", callback_data="cat:profile")],
         ]
     )
 
@@ -3014,7 +3009,64 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if query.data.startswith("nav:"):
         await query.answer()
-        await _navigate(update, context, query.data.split(":", 1)[1] or None, lang)
+        target = query.data.split(":", 1)[1]
+        if target == "main":
+            await _send_with_banner(
+                context,
+                update.effective_chat.id,
+                tr(lang, "start"),
+                _category_keyboard(lang),
+                edit_message_id=query.message.message_id,
+            )
+        elif target == "downloader":
+            await _send_with_banner(
+                context,
+                update.effective_chat.id,
+                tr(lang, "download_hub_title"),
+                _download_sub_keyboard(lang),
+                edit_message_id=query.message.message_id,
+            )
+        elif target == "student":
+            await _send_with_banner(
+                context,
+                update.effective_chat.id,
+                tr(lang, "student_hub_title"),
+                _student_sub_keyboard(lang),
+                edit_message_id=query.message.message_id,
+            )
+        elif target == "media":
+            await _send_with_banner(
+                context,
+                update.effective_chat.id,
+                tr(lang, "media_hub_title"),
+                _media_sub_keyboard(lang),
+                edit_message_id=query.message.message_id,
+            )
+        elif target == "games":
+            await _send_with_banner(
+                context,
+                update.effective_chat.id,
+                tr(lang, "games_hub_title"),
+                _games_sub_keyboard(lang),
+                edit_message_id=query.message.message_id,
+            )
+        elif target == "profile":
+            await _send_with_banner(
+                context,
+                update.effective_chat.id,
+                tr(lang, "profile_hub_title"),
+                _profile_sub_keyboard(lang),
+                edit_message_id=query.message.message_id,
+            )
+        else:
+            # fallback to main menu for unknown targets
+            await _send_with_banner(
+                context,
+                update.effective_chat.id,
+                tr(lang, "start"),
+                _category_keyboard(lang),
+                edit_message_id=query.message.message_id,
+            )
         return
 
     if query.data.startswith("tp:"):
