@@ -5,8 +5,9 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
 # ffmpeg powers the trim/cut feature and audio extraction (yt-dlp post-processing)
+# tesseract powers the OCR feature for student hub
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+    && apt-get install -y --no-install-recommends ffmpeg tesseract-ocr ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
