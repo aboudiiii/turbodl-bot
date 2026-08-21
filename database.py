@@ -509,12 +509,14 @@ def cache_prune(
         cur = conn.execute("DELETE FROM media_cache WHERE created_at < ?", (cutoff,))
         removed += int(cur.rowcount or 0)
         if limit and limit > 0:
+            # Keep the newest `limit` rows (by created_at DESC, id DESC), delete the rest.
             cur = conn.execute(
                 """
-                DELETE FROM media_cache WHERE id IN (
+                DELETE FROM media_cache
+                WHERE id NOT IN (
                     SELECT id FROM media_cache
                     ORDER BY created_at DESC, id DESC
-                    LIMIT -1 OFFSET ?
+                    LIMIT ?
                 )
                 """,
                 (limit,),
