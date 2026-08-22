@@ -46,6 +46,7 @@ import modules.student_hub
 import modules.media_hub
 import modules.games_hub
 import modules.admin_hub
+from modules import admin_hub, games_hub
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
