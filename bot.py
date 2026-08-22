@@ -45,6 +45,7 @@ from downloader import DownloadError, FORMAT_OPTIONS, download_queue
 import modules.student_hub
 import modules.media_hub
 import modules.games_hub
+import modules.admin_hub
 from modules import admin_hub
 
 logging.basicConfig(
