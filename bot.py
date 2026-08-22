@@ -761,10 +761,11 @@ def _student_sub_keyboard(lang: str) -> InlineKeyboardMarkup:
     """Sub-menu inside the Student & AI Hub."""
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("📄 صورة إلى PDF", callback_data="student:pdf")],
-            [InlineKeyboardButton("📄 PDF إلى صورة", callback_data="student:pdf2img")],
-            [InlineKeyboardButton("📝 ملخص texto", callback_data="student:summarize")],
-            [InlineKeyboardButton("🖼️ استخراج نص من صورة", callback_data="student:ocr")],
+            [InlineKeyboardButton("🖼️ استخراج نص (OCR)", callback_data="student:ocr"),
+             InlineKeyboardButton("🤖 تلخيص بالذكاء الاصطناعي", callback_data="student:summarize")],
+            [InlineKeyboardButton("📄 صورة إلى PDF", callback_data="student:pdf"),
+             InlineKeyboardButton("📑 دمج ملفات PDF", callback_data="student:merge")],
+            [InlineKeyboardButton("🎙️ تفريغ صوتي (STT)", callback_data="student:stt")],
             [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="nav:main")],
         ]
     )
@@ -774,9 +775,9 @@ def _media_sub_keyboard(lang: str) -> InlineKeyboardMarkup:
     """Sub-menu inside the Media Tools Hub."""
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("🎵 فيديو إلى MP3", callback_data="media:mp3")],
-            [InlineKeyboardButton("✂️ قص فيديو", callback_data="media:trim")],
-            [InlineKeyboardButton("📝 تحويل صوتي", callback_data="media:stt")],
+            [InlineKeyboardButton("🎵 تحويل إلى MP3", callback_data="media:mp3"),
+             InlineKeyboardButton("✂️ قص واقتطاع مقطع", callback_data="media:trim")],
+            [InlineKeyboardButton("📋 توليد كابشن تلقائي", callback_data="media:caption")],
             [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="nav:main")],
         ]
     )
@@ -786,8 +787,9 @@ def _games_sub_keyboard(lang: str) -> InlineKeyboardMarkup:
     """Sub-menu inside the Games & Loyalty system."""
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("📝 اختبار يومي", callback_data="games:quiz")],
-            [InlineKeyboardButton("🎁 نظام الإحالة", callback_data="games:referral")],
+            [InlineKeyboardButton("📝 الاختبار اليومي (+10)", callback_data="games:quiz"),
+             InlineKeyboardButton("🏆 لوحة الصدارة", callback_data="games:top")],
+            [InlineKeyboardButton("🎁 دعوة الأصدقاء والإحالة", callback_data="games:referral")],
             [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="nav:main")],
         ]
     )
@@ -3127,7 +3129,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             markup = InlineKeyboardMarkup(
                 [
                     [InlineKeyboardButton("💎 اشتري بريميوم", callback_data="menu:subscribe")],
-                    [InlineKeyboardButton("⬅️ القائمةHauptmenu", callback_data="main:menu")],
+                    [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="nav:main")],
                 ]
             )
             await _send_with_banner(
@@ -3144,15 +3146,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 context,
                 update.effective_chat.id,
                 tr(lang, "pdf_image_prompt"),
-                _back_keyboard(lang),
-                edit_message_id=query.message.message_id,
-            )
-        elif target == "student:pdf2img":
-            # PDF to Image: placeholder
-            await _send_with_banner(
-                context,
-                update.effective_chat.id,
-                tr(lang, "pdf2img_not_implemented"),
                 _back_keyboard(lang),
                 edit_message_id=query.message.message_id,
             )
@@ -3176,8 +3169,30 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 _back_keyboard(lang),
                 edit_message_id=query.message.message_id,
             )
+        elif target == "student:merge":
+            context.user_data["awaiting_merge_pdfs"] = True
+            await _send_with_banner(
+                context,
+                update.effective_chat.id,
+                "📑 أرسل ملفات PDF واحداً تلو الآخر لدمجها في ملف واحد:",
+                _back_keyboard(lang),
+                edit_message_id=query.message.message_id,
+            )
+        elif target == "student:stt":
+            context.user_data["awaiting_stt"] = True
+            await _send_with_banner(
+                context,
+                update.effective_chat.id,
+                "🎙️ أرسل رسالة صوتية أو ملف صوت لتفريغه إلى نص مكتوب:",
+                _back_keyboard(lang),
+                edit_message_id=query.message.message_id,
+            )
+        elif target == "student:pdffinish":
+            await student_hub.pdf_finish(update, context)
+        elif target == "student:mergefinish":
+            await student_hub.merge_finish(update, context)
         elif target == "finish_pdf":
-            await finish_pdf_conversion(update, context)
+            await student_hub.pdf_finish(update, context)
         else:
             # fallback to main menu for unknown targets
             await _send_with_banner(
@@ -3187,6 +3202,100 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 _category_keyboard(lang),
                 edit_message_id=query.message.message_id,
             )
+        return
+
+    # Direct Hub Category callback routing
+    if query.data.startswith("student:"):
+        act = query.data.split(":", 1)[1]
+        await query.answer()
+        if not admin_hub.is_module_enabled("student"):
+            await query.answer("⚠️ قسم خدمات الطلاب معطل حالياً من قبل الإدارة.", show_alert=True)
+            return
+        if act == "ocr":
+            context.user_data["awaiting_ocr_image"] = True
+            await _send_with_banner(context, update.effective_chat.id, tr(lang, "ocr_prompt"), _back_keyboard(lang), edit_message_id=query.message.message_id)
+        elif act == "summarize":
+            context.user_data["awaiting_summary_text"] = True
+            await _send_with_banner(context, update.effective_chat.id, tr(lang, "summarize_prompt"), _back_keyboard(lang), edit_message_id=query.message.message_id)
+        elif act == "pdf":
+            context.user_data["awaiting_pdf_images"] = True
+            await _send_with_banner(context, update.effective_chat.id, tr(lang, "pdf_image_prompt"), _back_keyboard(lang), edit_message_id=query.message.message_id)
+        elif act == "merge":
+            context.user_data["awaiting_merge_pdfs"] = True
+            await _send_with_banner(context, update.effective_chat.id, "📑 أرسل ملفات PDF لدمجها معاً:", _back_keyboard(lang), edit_message_id=query.message.message_id)
+        elif act == "stt":
+            context.user_data["awaiting_stt"] = True
+            await _send_with_banner(context, update.effective_chat.id, "🎙️ أرسل رسالة صوتية أو مقطع صوتي لتحويله إلى نص:", _back_keyboard(lang), edit_message_id=query.message.message_id)
+        elif act == "pdffinish":
+            await student_hub.pdf_finish(update, context)
+        elif act == "mergefinish":
+            await student_hub.merge_finish(update, context)
+        return
+
+    if query.data.startswith("media:"):
+        act = query.data.split(":", 1)[1]
+        await query.answer()
+        if not admin_hub.is_module_enabled("media"):
+            await query.answer("⚠️ قسم أدوات الميديا معطل حالياً من قبل الإدارة.", show_alert=True)
+            return
+        if act == "mp3":
+            context.user_data["media_op"] = "mp3"
+            await _send_with_banner(context, update.effective_chat.id, "🎵 أرسل مقطع الفيديو لتحويله واستخراج الصوت كـ MP3:", _back_keyboard(lang), edit_message_id=query.message.message_id)
+        elif act == "trim":
+            context.user_data["media_op"] = "trim"
+            await _send_with_banner(context, update.effective_chat.id, "✂️ أرسل مقطع الفيديو الذي ترغب في قصّه واقتطاعه:", _back_keyboard(lang), edit_message_id=query.message.message_id)
+        elif act == "caption":
+            context.user_data["media_op"] = "caption"
+            await _send_with_banner(context, update.effective_chat.id, "📋 أرسل مقطع فيديو أو صوت لتوليد كابشن ومعلومات مفصلة عنه:", _back_keyboard(lang), edit_message_id=query.message.message_id)
+        return
+
+    if query.data.startswith("games:"):
+        act = query.data.split(":", 1)[1]
+        if not admin_hub.is_module_enabled("games"):
+            await query.answer("⚠️ قسم الألعاب معطل حالياً من قبل الإدارة.", show_alert=True)
+            return
+        if act == "quiz":
+            await games_hub.quiz_start(update, context)
+        elif act == "top":
+            await games_hub.leaderboard_show(update, context)
+        elif act == "referral":
+            await games_hub.referral_show(update, context)
+        return
+
+    if query.data.startswith("profile:"):
+        act = query.data.split(":", 1)[1]
+        await query.answer()
+        if act == "status":
+            db_user = database.get_user(user.id)
+            lang = lang_of(db_user)
+            daily_used = db_user.get("daily_downloads", 0) or 0 if db_user else 0
+            daily_limit = config.FREE_DAILY_LIMIT
+            daily_remaining = daily_limit - daily_used
+            if db_user and db_user.get("is_premium"):
+                daily_remaining = -1
+            bonus = db_user.get("bonus_quota", 0) or 0 if db_user else 0
+            total_downloads = db_user.get("total_downloads", 0) or 0 if db_user else 0
+            bot_uname = context.bot_data.get("bot_username", "TurboDL_Iraq_bot")
+            referral_link = f"https://t.me/{bot_uname}?start=ref_{user.id}"
+            text = tr(
+                lang,
+                "profile_status",
+                daily_used=daily_used,
+                daily_remaining=daily_remaining if daily_remaining >= 0 else "غير محدود",
+                bonus=bonus,
+                total_downloads=total_downloads,
+                referral_link=referral_link,
+            )
+            await _send_with_banner(context, update.effective_chat.id, text, _back_keyboard(lang), edit_message_id=query.message.message_id)
+        elif act == "premium":
+            text = tr(lang, "premium_upgrade_options")
+            markup = InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton("💎 اشتري بريميوم", callback_data="menu:subscribe")],
+                    [InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="nav:main")],
+                ]
+            )
+            await _send_with_banner(context, update.effective_chat.id, text, markup, edit_message_id=query.message.message_id)
         return
 
     if query.data.startswith("tp:"):
@@ -3535,6 +3644,54 @@ def _start_health_server() -> None:
     log.info("Health server listening on 0.0.0.0:%s", port)
 
 
+# ============================================================
+# Unified Hub Message Routers
+# ============================================================
+
+async def hub_photo_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Route photo uploads to OCR, PDF Image collection, or Payment proof."""
+    ud = context.user_data
+    if ud.get("awaiting_ocr_image"):
+        return await student_hub.ocr_receive(update, context)
+    if ud.get("awaiting_pdf_images"):
+        return await student_hub.pdf_image_receive(update, context)
+    return await receive_payment_photo(update, context)
+
+
+async def hub_media_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Route video, audio, voice, and document uploads to appropriate hub handlers."""
+    ud = context.user_data
+    op = ud.get("media_op")
+    msg = update.effective_message
+
+    if op == "mp3":
+        return await media_hub.convert_video_to_mp3(update, context)
+    if op == "trim":
+        return await media_hub.video_trim_receive_file(update, context)
+    if op == "caption":
+        return await media_hub.auto_caption_receive(update, context)
+
+    if ud.get("awaiting_stt") and (msg.voice or msg.audio):
+        return await student_hub.stt_receive(update, context)
+
+    if ud.get("awaiting_merge_pdfs") and msg.document:
+        return await student_hub.merge_receive(update, context)
+
+    if ud.get("awaiting_summary_text") and msg.document:
+        return await student_hub.summary_receive(update, context)
+
+
+async def hub_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Route plain text messages to Trim timestamp parser, AI summarizer, or link downloader."""
+    ud = context.user_data
+    if ud.get("awaiting_media_trim_times"):
+        return await media_hub.video_trim_process_times(update, context)
+    if ud.get("awaiting_trim"):
+        return await handle_trim_input(update, context)
+    if ud.get("awaiting_summary_text"):
+        return await student_hub.summary_receive(update, context)
+
+
 def main() -> None:
     if not config.BOT_TOKEN:
         log.error("BOT_TOKEN is not set. Copy .env.example to .env and fill it in.")
@@ -3567,6 +3724,7 @@ def main() -> None:
     app.add_handler(CommandHandler("reset", reset_command))
     app.add_handler(CommandHandler("subscribe", subscribe))
     app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("modules", admin_hub.modules_command))
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CommandHandler("broadcast", broadcast))
     app.add_handler(CommandHandler("approve", approve_user))
@@ -3579,41 +3737,25 @@ def main() -> None:
     app.add_handler(CommandHandler("setlimit", set_limit_command))
     app.add_handler(CommandHandler("logs", logs_command))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern=r"^adm:"))
+    app.add_handler(CallbackQueryHandler(admin_hub.modules_toggle_callback, pattern=r"^mt:"))
+    app.add_handler(CallbackQueryHandler(games_hub.quiz_answer_callback, pattern=r"^gq:"))
     app.add_handler(
         CallbackQueryHandler(
-            callback_handler, pattern=r"^(lang|menu|sub|pay|fmt|nav|tp|trim|pl|sch|force):"
+            callback_handler, pattern=r"^(lang|menu|sub|pay|fmt|nav|tp|trim|pl|sch|force|student|media|games|profile|down):"
         )
     )
-    app.add_handler(MessageHandler(filters.PHOTO, receive_payment_photo))
+    app.add_handler(MessageHandler(filters.PHOTO, hub_photo_router))
+    app.add_handler(MessageHandler((filters.VIDEO | filters.VOICE | filters.AUDIO | filters.Document.ALL) & ~filters.COMMAND, hub_media_router))
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND & ~filters.Entity("url"),
-            handle_trim_input,
+            hub_text_router,
         )
     )
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND & filters.Entity("url"),
             handle_link,
-        )
-    )
-    # Student hub state handlers
-    app.add_handler(
-        MessageHandler(
-            filters.PHOTO & ~filters.COMMAND,
-            collect_pdf_images,
-        )
-    )
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            collect_summary_text,
-        )
-    )
-    app.add_handler(
-        MessageHandler(
-            filters.PHOTO & ~filters.COMMAND,
-            collect_ocr_text,
         )
     )
 
@@ -3644,30 +3786,9 @@ def main() -> None:
     app.add_handler(CommandHandler("announce", admin_hub.broadcast_command, block=False))
     app.add_handler(CommandHandler("maintenance", admin_hub.maintenance_toggle, block=False))
     # Message handler for maintenance mode (must be after other handlers)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_hub.maintenance_middleware))
+    app.add_handler(MessageHandler(~filters.COMMAND, admin_hub.maintenance_middleware), group=-1)
 
     app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-
-# ============================================================
-# Student & AI Hub State Handlers
-# ============================================================
-
-async def collect_pdf_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Collect photos for Image-to-PDF conversion."""
-    ...
-
-async def collect_summary_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Collect text for AI summarization using Google Gemini."""
-    ...
-
-async def collect_ocr_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Extract text from photo using OCR."""
-    ...
-
-async def finish_pdf_conversion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Process the collected images into a PDF document."""
-    ...
 
 
 if __name__ == "__main__":

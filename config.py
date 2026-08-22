@@ -115,6 +115,10 @@ SEARCH_RESULTS = _env_int("SEARCH_RESULTS", 5)
 # ffmpeg binary used for the trim/cut feature. Empty value disables trimming.
 FFMPEG_BIN = _env("FFMPEG_BIN", "ffmpeg")
 
+# Google Gemini AI (Student & AI Hub features: summarize, OCR fallback, STT).
+GEMINI_API_KEY = _env("GEMINI_API_KEY")
+GEMINI_MODEL = _env("GEMINI_MODEL", "gemini-1.5-flash")
+
 # Netscape-format cookies file handed to yt-dlp (fixes Instagram login walls,
 # "empty media response" and anonymous rate limits). Path is relative to this
 # file when not absolute. Missing file = cookies disabled.
@@ -178,9 +182,9 @@ LOG_CHANNEL_ID = int(_log_env) if _log_env.lstrip("-").isdigit() else ADMIN_ID
 _owner_env = _env("BOT_OWNER_ID", "5283516841")
 BOT_OWNER_ID = int(_owner_env) if _owner_env.lstrip("-").isdigit() else ADMIN_ID
 
-# ---------------------------------------------------------------------------
-# Start screen (BotFather) texts — set on startup via the Bot API
-# ---------------------------------------------------------------------------
+# Optional Google Gemini AI (Student & AI Hub features: summarize, OCR fallback, STT).
+GEMINI_API_KEY = _env("GEMINI_API_KEY")
+GEMINI_MODEL = _env("GEMINI_MODEL", "gemini-1.5-flash")
 # Each startup pushes both the short description (profile / start button text,
 # max 120 chars per language) and the long description (empty-chat intro text,
 # max 512 chars) through setMyShortDescription / setMyDescription. Leave a value
