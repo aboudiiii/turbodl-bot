@@ -42,6 +42,11 @@ import database
 import downloader
 from downloader import DownloadError, FORMAT_OPTIONS, download_queue
 
+import modules.student_hub
+import modules.media_hub
+import modules.games_hub
+
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
