@@ -41,5 +41,13 @@ jobs:
       - name: Install dependencies
         run: pip install --no-cache-dir -r requirements.txt
 
+      # Fail fast (and clearly) on syntax errors / missing modules BEFORE
+      # starting the long-running polling process. Imports here must not
+      # require network access or real secrets.
+      - name: Preflight checks (syntax + imports)
+        run: |
+          python -m compileall -q bot.py config.py database.py downloader.py modules
+          python -c "import modules.student_hub, modules.media_hub, modules.games_hub, modules.admin_hub; print('preflight OK: all modules import cleanly')"
+
       - name: Run bot
         run: python bot.py
