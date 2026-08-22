@@ -3638,7 +3638,15 @@ def main() -> None:
 
     log.info("TurboDL started")
     _start_health_server()
-# Admin command handlersapp.add_handler(    CommandHandler("broadcast", admin_hub.broadcast_command, block=False),)app.add_handler(    CommandHandler("announce", admin_hub.broadcast_command, block=False),)app.add_handler(    CommandHandler("maintenance", admin_hub.maintenance_toggle, block=False),)# Message handler for maintenance mode (must be after other handlers)app.add_handler(    MessageHandler(filters.TEXT & ~filters.COMMAND, admin_hub.maintenance_middleware),)    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    # Admin command handlers
+    app.add_handler(CommandHandler("broadcast", admin_hub.broadcast_command, block=False))
+    app.add_handler(CommandHandler("announce", admin_hub.broadcast_command, block=False))
+    app.add_handler(CommandHandler("maintenance", admin_hub.maintenance_toggle, block=False))
+    # Message handler for maintenance mode (must be after other handlers)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_hub.maintenance_middleware))
+
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 # ============================================================
